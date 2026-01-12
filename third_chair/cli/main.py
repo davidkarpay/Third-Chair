@@ -320,6 +320,144 @@ def status(
 
 
 @app.command()
+def witnesses(
+    case_dir: Path = typer.Argument(..., help="Case directory"),
+    import_file: Optional[Path] = typer.Option(
+        None,
+        "--import", "-i",
+        help="Import witness list from file (PDF, DOCX, XLSX, TXT)",
+    ),
+    list_all: bool = typer.Option(
+        False,
+        "--list", "-l",
+        help="List all witnesses",
+    ),
+    rename: Optional[str] = typer.Option(
+        None,
+        "--rename", "-r",
+        help="Rename a speaker (format: SPEAKER_1=John Doe)",
+    ),
+    suggest: bool = typer.Option(
+        False,
+        "--suggest",
+        help="Suggest names for unnamed speakers",
+    ),
+):
+    """
+    Manage witnesses in a case.
+
+    Import witness lists, rename speakers, and view witness information.
+    """
+    from ..models import Case
+    from ..witnesses import (
+        process_witnesses,
+        rename_speaker,
+        get_unnamed_speakers,
+        suggest_speaker_names,
+    )
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    case = Case.load(case_file)
+
+    # Handle rename
+    if rename:
+        if "=" not in rename:
+            console.print("[red]Error: Use format SPEAKER_1=John Doe[/red]")
+            raise typer.Exit(1)
+
+        speaker_id, name = rename.split("=", 1)
+        speaker_id = speaker_id.strip()
+        name = name.strip()
+
+        if rename_speaker(case, speaker_id, name):
+            console.print(f"[green]Renamed {speaker_id} to {name}[/green]")
+        else:
+            console.print(f"[yellow]Speaker {speaker_id} not found[/yellow]")
+        return
+
+    # Handle import
+    if import_file:
+        if not import_file.exists():
+            console.print(f"[red]Error: File not found: {import_file}[/red]")
+            raise typer.Exit(1)
+
+        case = process_witnesses(
+            case=case,
+            witness_list_path=import_file,
+            show_progress=True,
+        )
+        console.print(f"[green]Imported and matched witnesses[/green]")
+        return
+
+    # Handle suggest
+    if suggest:
+        console.print("\n[bold]Name Suggestions for Speakers[/bold]\n")
+
+        for evidence in case.evidence_items:
+            if not evidence.transcript:
+                continue
+
+            suggestions = suggest_speaker_names(evidence.transcript)
+            if suggestions:
+                console.print(f"[cyan]{evidence.filename}:[/cyan]")
+                for speaker_id, names in suggestions.items():
+                    console.print(f"  {speaker_id}: {', '.join(names)}")
+
+        return
+
+    # Default: list witnesses
+    if list_all or not (import_file or rename or suggest):
+        _list_witnesses(case)
+
+
+def _list_witnesses(case) -> None:
+    """Display witness list in a table."""
+    from ..models import WitnessRole
+
+    if not case.witnesses.witnesses:
+        console.print("[yellow]No witnesses found. Run with --import to add a witness list.[/yellow]")
+        return
+
+    table = Table(title=f"Witnesses ({len(case.witnesses.witnesses)} total)")
+    table.add_column("ID", style="dim")
+    table.add_column("Name", style="cyan")
+    table.add_column("Role")
+    table.add_column("Speaker IDs")
+    table.add_column("Evidence")
+    table.add_column("Verified", justify="center")
+
+    for witness in case.witnesses.witnesses:
+        # Format role with color
+        role_str = witness.role.value
+        if witness.role == WitnessRole.VICTIM:
+            role_str = f"[red]{role_str}[/red]"
+        elif witness.role == WitnessRole.OFFICER:
+            role_str = f"[blue]{role_str}[/blue]"
+        elif witness.role == WitnessRole.WITNESS:
+            role_str = f"[green]{role_str}[/green]"
+
+        table.add_row(
+            witness.id[:8],
+            witness.display_name,
+            role_str,
+            ", ".join(witness.speaker_ids[:2]) + ("..." if len(witness.speaker_ids) > 2 else ""),
+            str(len(witness.evidence_appearances)),
+            "[green]✓[/green]" if witness.verified else "[dim]✗[/dim]",
+        )
+
+    console.print(table)
+
+    # Show unmatched count
+    unnamed = case.witnesses.get_unnamed()
+    if unnamed:
+        console.print(f"\n[yellow]{len(unnamed)} speakers without names. Use --rename to assign names.[/yellow]")
+
+
+@app.command()
 def version():
     """Show version information."""
     console.print("Third Chair v0.1.0")
