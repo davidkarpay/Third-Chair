@@ -458,6 +458,85 @@ def _list_witnesses(case) -> None:
 
 
 @app.command()
+def documents(
+    case_dir: Path = typer.Argument(..., help="Case directory"),
+    no_ocr: bool = typer.Option(
+        False,
+        "--no-ocr",
+        help="Disable OCR for scanned documents",
+    ),
+    extract_file: Optional[Path] = typer.Option(
+        None,
+        "--extract", "-e",
+        help="Extract text from a specific file",
+    ),
+):
+    """
+    Process documents in a case.
+
+    Extracts text from PDFs, Word documents, and images.
+    """
+    from ..models import Case
+    from ..documents import (
+        process_case_documents,
+        get_document_summary,
+        extract_document_text,
+    )
+
+    # Handle single file extraction
+    if extract_file:
+        if not extract_file.exists():
+            console.print(f"[red]Error: File not found: {extract_file}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"Extracting text from: {extract_file.name}\n")
+        try:
+            text = extract_document_text(extract_file)
+            if text:
+                console.print(text[:2000])
+                if len(text) > 2000:
+                    console.print(f"\n[dim]... ({len(text)} characters total)[/dim]")
+            else:
+                console.print("[yellow]No text extracted.[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+        return
+
+    # Process case documents
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    case = Case.load(case_file)
+
+    console.print(f"Processing documents in case: {case.case_id}\n")
+
+    case = process_case_documents(
+        case=case,
+        ocr_if_needed=not no_ocr,
+        show_progress=True,
+    )
+
+    # Show summary
+    summary = get_document_summary(case)
+
+    console.print(f"\n[bold]Document Summary[/bold]")
+    console.print(f"  Total documents: {summary['total_documents']}")
+    console.print(f"  Processed: {summary['processed']}")
+    console.print(f"  With text: {summary['with_text']}")
+    console.print(f"  Total words: {summary['total_words']:,}")
+
+    if summary['axon_transcripts'] > 0:
+        console.print(f"  Axon transcripts: {summary['axon_transcripts']}")
+
+    if summary['by_type']:
+        console.print("\n  By type:")
+        for ext, count in sorted(summary['by_type'].items()):
+            console.print(f"    {ext}: {count}")
+
+
+@app.command()
 def version():
     """Show version information."""
     console.print("Third Chair v0.1.0")
