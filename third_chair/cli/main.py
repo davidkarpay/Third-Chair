@@ -39,6 +39,11 @@ def process(
         "--skip-translation",
         help="Skip Spanish translation",
     ),
+    skip_summarization: bool = typer.Option(
+        False,
+        "--skip-summarization",
+        help="Skip AI summarization",
+    ),
     no_diarization: bool = typer.Option(
         False,
         "--no-diarization",
@@ -52,11 +57,13 @@ def process(
     1. Extract and classify files
     2. Transcribe audio/video
     3. Detect language and translate Spanish
-    4. Generate reports
+    4. Generate AI summaries and timeline
+    5. Generate reports
     """
     from ..ingest import ingest_axon_package
     from ..transcription import transcribe_case
     from ..translation import translate_case
+    from ..summarization import summarize_case_evidence
 
     # Validate input
     if not zip_file.exists():
@@ -96,6 +103,11 @@ def process(
     if not skip_translation:
         console.print("\n[bold]Step 3: Translating Spanish content...[/bold]")
         case = translate_case(case=case, show_progress=True)
+
+    # Step 4: Summarization
+    if not skip_summarization:
+        console.print("\n[bold]Step 4: Generating AI summaries...[/bold]")
+        case = summarize_case_evidence(case=case, show_progress=True)
 
     # Summary
     console.print("\n[bold green]Processing complete![/bold green]")
@@ -534,6 +546,106 @@ def documents(
         console.print("\n  By type:")
         for ext, count in sorted(summary['by_type'].items()):
             console.print(f"    {ext}: {count}")
+
+
+@app.command()
+def summarize(
+    case_dir: Path = typer.Argument(..., help="Case directory"),
+    timeline_only: bool = typer.Option(
+        False,
+        "--timeline",
+        help="Only generate timeline",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Include detailed transcript summaries",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Write summary to file",
+    ),
+):
+    """
+    Generate AI summaries for a case.
+
+    Creates:
+    - Transcript summaries with key statements
+    - Chronological timeline
+    - Executive case summary
+
+    Requires Ollama to be running with mistral or similar model.
+    """
+    from ..models import Case
+    from ..summarization import (
+        summarize_case_evidence,
+        get_case_summary_text,
+        get_timeline_text,
+        check_ollama_ready,
+    )
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    # Check Ollama
+    is_ready, message = check_ollama_ready()
+    if not is_ready:
+        console.print(f"[yellow]Warning: {message}[/yellow]")
+        console.print("[dim]Summaries may be limited without AI.[/dim]\n")
+
+    case = Case.load(case_file)
+
+    console.print(f"\n[bold]Summarizing case: {case.case_id}[/bold]\n")
+
+    if timeline_only:
+        # Just build and show timeline
+        from ..summarization import build_timeline, format_timeline
+
+        console.print("[bold]Building timeline...[/bold]")
+        entries = build_timeline(case)
+
+        if not entries:
+            console.print("[yellow]No timeline events found.[/yellow]")
+            return
+
+        timeline_text = format_timeline(entries)
+
+        if output_file:
+            output_file.write_text(timeline_text)
+            console.print(f"\nTimeline saved to: {output_file}")
+        else:
+            console.print(f"\n{timeline_text}")
+
+        console.print(f"\n[dim]{len(entries)} timeline events[/dim]")
+        return
+
+    # Full summarization
+    case = summarize_case_evidence(case=case, show_progress=True)
+
+    # Display or save summary
+    summary_text = get_case_summary_text(case)
+
+    if output_file:
+        output_file.write_text(summary_text)
+        console.print(f"\n[green]Summary saved to: {output_file}[/green]")
+    else:
+        console.print("\n" + "=" * 60)
+        console.print(summary_text)
+
+    # Show key stats
+    console.print("\n[bold]Summary Statistics[/bold]")
+    if case.metadata:
+        if case.metadata.get("threats_identified", 0) > 0:
+            console.print(f"  [red]Threats detected: {case.metadata['threats_identified']}[/red]")
+        if case.metadata.get("violence_indicators", 0) > 0:
+            console.print(f"  [yellow]Violence indicators: {case.metadata['violence_indicators']}[/yellow]")
+        if case.metadata.get("items_needing_review"):
+            console.print(f"  [yellow]Items needing review: {len(case.metadata['items_needing_review'])}[/yellow]")
+
+    console.print(f"  Timeline events: {len(case.timeline)}")
 
 
 @app.command()
