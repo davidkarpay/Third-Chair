@@ -32,6 +32,13 @@ from .pdf_generator import (
     PdfGenerator,
     generate_case_pdf,
 )
+from .viewing_guide import (
+    ViewingRecommendation,
+    generate_viewing_guide,
+    format_viewing_guide_text,
+    write_viewing_guide,
+    get_viewing_stats,
+)
 
 
 def generate_all_reports(
@@ -142,4 +149,10 @@ __all__ = [
     # PDF generation
     "PdfGenerator",
     "generate_case_pdf",
+    # Viewing guide
+    "ViewingRecommendation",
+    "generate_viewing_guide",
+    "format_viewing_guide_text",
+    "write_viewing_guide",
+    "get_viewing_stats",
 ]

@@ -42,9 +42,21 @@ class OllamaConfig:
 
     base_url: str = "http://localhost:11434"
     translation_model: str = "aya-expanse:8b"
-    summary_model: str = "mistral:7b"
+    summary_model: str = "llama3.2:latest"
+    vision_model: str = "qwen2.5vl:3b"
     timeout: int = 120  # Seconds - CPU inference is slow
     max_retries: int = 3
+
+
+@dataclass
+class VisionConfig:
+    """Configuration for vision model analysis."""
+
+    enabled: bool = True
+    model: str = "qwen2.5vl:3b"
+    timeout: int = 120
+    temperature: float = 0.3
+    max_image_size: int = 1024  # Max dimension for resizing
 
 
 @dataclass
@@ -78,6 +90,7 @@ class Settings:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
     # Paths
     output_dir: Path = field(default_factory=lambda: Path("./output"))
@@ -108,6 +121,13 @@ class Settings:
 
         if model := os.getenv("OLLAMA_SUMMARY_MODEL"):
             settings.ollama.summary_model = model
+
+        if model := os.getenv("OLLAMA_VISION_MODEL"):
+            settings.ollama.vision_model = model
+            settings.vision.model = model
+
+        if os.getenv("VISION_ENABLED", "").lower() == "false":
+            settings.vision.enabled = False
 
         if output_dir := os.getenv("THIRD_CHAIR_OUTPUT_DIR"):
             settings.output_dir = Path(output_dir)

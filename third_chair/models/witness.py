@@ -107,6 +107,14 @@ class WitnessList:
         """Add a witness to the list."""
         self.witnesses.append(witness)
 
+    def __len__(self) -> int:
+        """Return number of witnesses."""
+        return len(self.witnesses)
+
+    def __iter__(self):
+        """Iterate over witnesses."""
+        return iter(self.witnesses)
+
     def get_by_id(self, witness_id: str) -> Optional[Witness]:
         """Get witness by ID."""
         for w in self.witnesses:

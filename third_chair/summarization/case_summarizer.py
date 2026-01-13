@@ -222,7 +222,7 @@ def _build_summary_input(case: Case, partial_summary: CaseSummary) -> str:
     # Witness information
     if case.witnesses:
         lines.append("\n--- Witnesses ---")
-        for witness in case.witnesses[:10]:
+        for witness in list(case.witnesses)[:10]:
             role = witness.role.value if witness.role else "unknown"
             name = witness.name or f"Speaker {witness.id}"
             lines.append(f"  {name} ({role})")

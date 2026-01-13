@@ -748,6 +748,234 @@ def report(
 
 
 @app.command()
+def vision(
+    case_dir: Path = typer.Argument(..., help="Case directory"),
+    all_images: bool = typer.Option(
+        False,
+        "--all",
+        help="Analyze all images in the case",
+    ),
+    image: Optional[str] = typer.Option(
+        None,
+        "--image", "-i",
+        help="Analyze a specific image by filename",
+    ),
+    prompt: Optional[str] = typer.Option(
+        None,
+        "--prompt", "-p",
+        help="Custom analysis prompt",
+    ),
+    prompt_type: str = typer.Option(
+        "general",
+        "--type", "-t",
+        help="Prompt type: general, scene, injury, property, vehicle, document",
+    ),
+):
+    """
+    Analyze images using vision AI model.
+
+    Uses qwen2.5vl:3b (or configured vision model) to describe
+    evidence photos for legal discovery.
+    """
+    from ..models import Case, FileType
+    from ..documents.vision_analyzer import (
+        VisionAnalyzer,
+        check_vision_ready,
+        LEGAL_PROMPTS,
+    )
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    # Check vision model
+    is_ready, message = check_vision_ready()
+    if not is_ready:
+        console.print(f"[red]Error: {message}[/red]")
+        raise typer.Exit(1)
+
+    case = Case.load(case_file)
+    analyzer = VisionAnalyzer()
+
+    console.print(f"\n[bold]Vision Analysis for case: {case.case_id}[/bold]")
+    console.print(f"Model: {analyzer.model}\n")
+
+    # Get images to analyze
+    images = [
+        e for e in case.evidence_items
+        if e.file_type == FileType.IMAGE and e.file_path.exists()
+    ]
+
+    if not images:
+        console.print("[yellow]No images found in case.[/yellow]")
+        return
+
+    if image:
+        # Analyze specific image
+        target = next((e for e in images if e.filename == image), None)
+        if not target:
+            console.print(f"[red]Image not found: {image}[/red]")
+            console.print(f"[dim]Available: {', '.join(e.filename for e in images[:5])}...[/dim]")
+            raise typer.Exit(1)
+        images = [target]
+    elif not all_images:
+        # Show available images
+        console.print(f"[bold]{len(images)} images available:[/bold]")
+        for e in images[:10]:
+            console.print(f"  - {e.filename}")
+        if len(images) > 10:
+            console.print(f"  ... and {len(images) - 10} more")
+        console.print("\nUse --all to analyze all, or --image <name> for one.")
+        return
+
+    # Analyze images
+    console.print(f"Analyzing {len(images)} image(s)...\n")
+
+    for i, evidence in enumerate(images, 1):
+        console.print(f"[bold][{i}/{len(images)}] {evidence.filename}[/bold]")
+
+        analysis = analyzer.analyze(
+            evidence.file_path,
+            prompt=prompt,
+            prompt_type=prompt_type,
+        )
+
+        if not analysis.success:
+            console.print(f"[red]  Error: {analysis.error}[/red]")
+            continue
+
+        # Show results
+        console.print(f"  [dim]Time: {analysis.processing_time_ms:.0f}ms[/dim]")
+
+        if analysis.weapons_detected:
+            console.print("  [red bold]WEAPONS DETECTED[/red bold]")
+        if analysis.injuries_visible:
+            console.print("  [yellow bold]INJURIES VISIBLE[/yellow bold]")
+        if analysis.damage_detected:
+            console.print("  [orange1]Damage detected[/orange1]")
+        if analysis.people_count > 0:
+            console.print(f"  People: {analysis.people_count}")
+        if analysis.scene_type:
+            console.print(f"  Scene: {analysis.scene_type}")
+
+        # Show description (truncated)
+        desc = analysis.description[:500]
+        if len(analysis.description) > 500:
+            desc += "..."
+        console.print(f"\n  {desc}\n")
+
+        # Store in evidence metadata
+        evidence.metadata["vision_analysis"] = {
+            "model": analysis.model,
+            "description": analysis.description,
+            "weapons_detected": analysis.weapons_detected,
+            "injuries_visible": analysis.injuries_visible,
+            "damage_detected": analysis.damage_detected,
+            "people_count": analysis.people_count,
+            "scene_type": analysis.scene_type,
+            "key_findings": analysis.key_findings,
+        }
+
+    # Save updated case
+    case.save(case_file)
+    console.print(f"[green]Analysis saved to case.json[/green]")
+
+    # Show summary
+    if len(images) > 1:
+        weapons = sum(1 for e in images if e.metadata.get("vision_analysis", {}).get("weapons_detected"))
+        injuries = sum(1 for e in images if e.metadata.get("vision_analysis", {}).get("injuries_visible"))
+        damage = sum(1 for e in images if e.metadata.get("vision_analysis", {}).get("damage_detected"))
+
+        console.print(f"\n[bold]Summary:[/bold]")
+        console.print(f"  Images analyzed: {len(images)}")
+        if weapons:
+            console.print(f"  [red]Weapons detected in {weapons} image(s)[/red]")
+        if injuries:
+            console.print(f"  [yellow]Injuries visible in {injuries} image(s)[/yellow]")
+        if damage:
+            console.print(f"  Damage detected in {damage} image(s)")
+
+
+@app.command("viewing-guide")
+def viewing_guide(
+    case_dir: Path = typer.Argument(..., help="Path to processed case directory"),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Output file path (default: reports/viewing_guide.txt)",
+    ),
+    flags: Optional[str] = typer.Option(
+        None,
+        "--flags", "-f",
+        help="Filter by flag type (comma-separated: THREAT_KEYWORD,VIOLENCE_KEYWORD)",
+    ),
+    no_speaker: bool = typer.Option(
+        False,
+        "--no-speaker",
+        help="Exclude speaker information from output",
+    ),
+):
+    """
+    Generate a viewing guide with recommended video timestamps.
+
+    Extracts flagged moments from transcripts (threats, violence, etc.)
+    with timestamps for quick video review.
+    """
+    from ..models import Case
+    from ..reports.viewing_guide import (
+        generate_viewing_guide,
+        format_viewing_guide_text,
+        write_viewing_guide,
+        get_viewing_stats,
+    )
+
+    # Validate case directory
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: No case.json found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    # Load case
+    console.print(f"Loading case from {case_dir}...")
+    case = Case.load(case_file)
+
+    # Parse flag filter
+    flag_filter = None
+    if flags:
+        flag_filter = [f.strip().upper() for f in flags.split(",")]
+        console.print(f"Filtering by flags: {flag_filter}")
+
+    # Get stats first
+    stats = get_viewing_stats(case)
+    console.print(f"\n[bold]Viewing Guide Statistics[/bold]")
+    console.print(f"  Total flagged moments: {stats['total_flagged_moments']}")
+    console.print(f"  Videos with flagged content: {stats['videos_with_flags']}")
+
+    if stats['flag_counts']:
+        console.print("\n  Flag breakdown:")
+        for flag, count in sorted(stats['flag_counts'].items(), key=lambda x: -x[1]):
+            console.print(f"    {flag}: {count}")
+
+    # Set output path
+    if output is None:
+        reports_dir = case_dir / "reports"
+        reports_dir.mkdir(exist_ok=True)
+        output = reports_dir / "viewing_guide.txt"
+
+    # Generate guide
+    console.print(f"\nGenerating viewing guide...")
+    output_path = write_viewing_guide(
+        case=case,
+        output_path=output,
+        flag_filter=flag_filter,
+        include_speaker=not no_speaker,
+    )
+
+    console.print(f"\n[green]Viewing guide written to: {output_path}[/green]")
+
+
+@app.command()
 def version():
     """Show version information."""
     console.print("Third Chair v0.1.0")
