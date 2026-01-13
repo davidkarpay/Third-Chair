@@ -109,6 +109,17 @@ def process(
         console.print("\n[bold]Step 4: Generating AI summaries...[/bold]")
         case = summarize_case_evidence(case=case, show_progress=True)
 
+    # Step 5: Reports
+    console.print("\n[bold]Step 5: Generating reports...[/bold]")
+    from ..reports import generate_attorney_report, ReportConfig
+    report_config = ReportConfig(format="docx")
+    report_result = generate_attorney_report(
+        case=case,
+        output_dir=output,
+        config=report_config,
+        show_progress=True,
+    )
+
     # Summary
     console.print("\n[bold green]Processing complete![/bold green]")
     console.print(f"  Processed: {case.processed_count}/{case.evidence_count} items")
@@ -646,6 +657,94 @@ def summarize(
             console.print(f"  [yellow]Items needing review: {len(case.metadata['items_needing_review'])}[/yellow]")
 
     console.print(f"  Timeline events: {len(case.timeline)}")
+
+
+@app.command()
+def report(
+    case_dir: Path = typer.Argument(..., help="Case directory"),
+    format: str = typer.Option(
+        "docx",
+        "--format", "-f",
+        help="Output format: docx, pdf, text, or all",
+    ),
+    bates_prefix: str = typer.Option(
+        "DEF",
+        "--bates-prefix", "-b",
+        help="Bates number prefix (e.g., DEF, PLT)",
+    ),
+    bates_start: int = typer.Option(
+        1,
+        "--bates-start",
+        help="Starting Bates number",
+    ),
+    prepared_by: Optional[str] = typer.Option(
+        None,
+        "--prepared-by", "-p",
+        help="Name of report preparer",
+    ),
+    include_transcripts: bool = typer.Option(
+        False,
+        "--include-transcripts",
+        help="Include full transcripts in report",
+    ),
+):
+    """
+    Generate attorney reports for a case.
+
+    Creates comprehensive reports including:
+    - Evidence inventory
+    - Witness list
+    - Timeline of events
+    - Key statements
+    - Executive summary
+
+    Output formats:
+    - docx: Word document
+    - pdf: PDF with Bates numbering
+    - text: Plain text
+    - all: All formats
+    """
+    from ..models import Case
+    from ..reports import generate_attorney_report, ReportConfig
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if format not in ("docx", "pdf", "text", "all"):
+        console.print(f"[red]Error: Invalid format '{format}'. Use: docx, pdf, text, or all[/red]")
+        raise typer.Exit(1)
+
+    case = Case.load(case_file)
+
+    console.print(f"\n[bold]Generating reports for case: {case.case_id}[/bold]\n")
+
+    config = ReportConfig(
+        format=format,
+        bates_prefix=bates_prefix,
+        bates_start=bates_start,
+        prepared_by=prepared_by,
+        include_transcripts=include_transcripts,
+    )
+
+    result = generate_attorney_report(
+        case=case,
+        output_dir=case_dir,
+        config=config,
+        show_progress=True,
+    )
+
+    # Show results
+    console.print(f"\n[bold green]Reports generated successfully![/bold green]")
+    console.print(f"Output directory: {result.output_dir}")
+    console.print(f"\nFiles created ({len(result.files_created)}):")
+
+    for filename in result.files_created:
+        console.print(f"  - {filename}")
+
+    if result.final_bates_number:
+        console.print(f"\n[dim]Bates range: {bates_prefix}{bates_start:06d} - {bates_prefix}{result.final_bates_number:06d}[/dim]")
 
 
 @app.command()
