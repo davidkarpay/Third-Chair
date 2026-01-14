@@ -1,176 +1,114 @@
-# Third Chair - AI Assistant Instructions
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
 Third Chair is a legal discovery processing tool for Axon body-worn camera evidence packages. It transcribes audio/video, detects and translates Spanish content, manages witnesses, and generates attorney-ready reports with Bates numbering.
 
+## Build & Development Commands
+
+```bash
+# Install in development mode
+pip install -e .
+
+# Run CLI directly (without installation)
+python -m third_chair.cli.main <command>
+
+# Run tests
+pytest tests/ -v
+
+# Run a single test
+pytest tests/unit/test_file.py::test_function -v
+
+# Lint (ruff)
+ruff check third_chair/
+
+# Type check
+mypy third_chair/
+
+# System dependencies (Ubuntu/WSL)
+sudo apt-get install tesseract-ocr ffmpeg
+```
+
+## Ollama Management
+
+```bash
+# Required models
+ollama pull aya-expanse:8b   # Translation
+ollama pull mistral:7b       # Summarization
+
+# Unload idle models (prevents CPU thrashing)
+curl http://localhost:11434/api/generate -d '{"model": "MODEL_NAME", "keep_alive": 0}'
+
+# Restart if slow (stuck model runners)
+sudo snap restart ollama
+```
+
 ## Architecture
 
-```
-third_chair/
-├── config/          # Configuration settings
-│   └── settings.py  # Dataclass-based config with env var overrides
-├── ingest/          # ZIP extraction, file classification
-│   ├── zip_extractor.py    # Axon ZIP extraction
-│   ├── file_classifier.py  # Auto-categorize files
-│   ├── metadata_parser.py  # Parse Axon filename patterns
-│   └── toc_parser.py       # Parse Table_of_Contents.xlsx
-├── transcription/   # Whisper transcription, diarization
-│   ├── media_processor.py      # FFmpeg normalization (16kHz mono)
-│   ├── whisper_transcribe.py   # faster-whisper wrapper
-│   ├── diarize.py              # pyannote speaker diarization
-│   └── segment_consolidator.py # Merge fragmented segments
-├── translation/     # Ollama translation, language detection
-│   ├── language_detector.py   # FastText + keyword detection
-│   ├── ollama_translator.py   # Ollama API wrapper
-│   └── phrase_extractor.py    # Spanish phrase extraction
-├── witnesses/       # Witness management
-│   ├── speaker_roles.py       # Officer/Victim/Witness detection
-│   ├── witness_importer.py    # Multi-format import (PDF, DOCX, XLSX)
-│   └── witness_matcher.py     # Match witnesses to speakers
-├── documents/       # PDF/DOCX/image processing
-│   ├── pdf_extractor.py    # pdfplumber + OCR fallback
-│   ├── docx_parser.py      # Word + Axon transcript parsing
-│   └── image_processor.py  # pytesseract OCR
-├── summarization/   # AI summaries via Ollama
-│   ├── ollama_client.py        # Ollama API wrapper
-│   ├── transcript_summarizer.py # Per-transcript summaries
-│   ├── timeline_builder.py     # Chronological timeline
-│   └── case_summarizer.py      # Executive case summary
-├── reports/         # Report generation
-│   ├── evidence_inventory.py # Evidence catalog
-│   ├── docx_generator.py     # Word document output
-│   ├── pdf_generator.py      # PDF with Bates numbering
-│   └── attorney_report.py    # Unified report generation
-├── models/          # Data models
-│   ├── case.py       # Case with evidence, witnesses, timeline, propositions
-│   ├── evidence.py   # EvidenceItem with file type/content type
-│   ├── transcript.py # Transcript with segments, speakers, flags
-│   ├── witness.py    # Witness with roles and speaker IDs
-│   └── proposition.py # Skanda Framework: Proposition, Proposit, Skanda
-├── analysis/        # Proposition analysis (Skanda Framework)
-│   ├── proposition_extractor.py # Seed proposits from evidence
-│   └── skanda_evaluator.py      # Deterministic evaluation
-├── chat/            # Chat Research Assistant
-│   ├── tools.py     # Tool definitions
-│   └── registry.py  # Tool registry for function calling
-├── tui/             # Terminal User Interface
-│   ├── app.py       # Main Textual application
-│   ├── screens.py   # Case selection screen
-│   └── widgets.py   # Directory tree, chat panel widgets
-├── cli/             # Typer CLI interface
-│   └── main.py      # All CLI commands
-└── utils/           # Utilities
-    ├── logging.py   # Rich-based logging
-    ├── places.py    # Place name preservation
-    └── hash.py      # SHA-256 file hashing
-```
+### Module Organization
 
-## Key Files
+| Module | Purpose |
+|--------|---------|
+| `cli/` | Typer CLI (`main.py` has all commands) |
+| `tui/` | Textual TUI (app.py, screens.py, widgets.py) |
+| `models/` | Dataclasses: Case, EvidenceItem, Transcript, Proposition |
+| `ingest/` | ZIP extraction, file classification, ToC parsing |
+| `transcription/` | faster-whisper + pyannote diarization |
+| `translation/` | FastText language detection + Ollama translation |
+| `documents/` | PDF/DOCX/image processing, OCR, frame extraction |
+| `summarization/` | Ollama-powered summaries, timeline builder |
+| `analysis/` | Skanda Framework proposition evaluation |
+| `witnesses/` | Witness import, speaker role detection |
+| `reports/` | DOCX/PDF generation with Bates numbering |
+| `chat/` | Research assistant tools |
 
-- `third_chair/cli/main.py` - CLI entry point with all commands
-- `third_chair/models/case.py` - Main Case data model (JSON serializable)
-- `third_chair/ingest/__init__.py` - Evidence ingestion pipeline
-- `third_chair/transcription/__init__.py` - Transcription pipeline
-- `third_chair/translation/__init__.py` - Translation pipeline
-- `third_chair/summarization/__init__.py` - Summarization pipeline
-- `third_chair/reports/__init__.py` - Report generation pipeline
+### Pipeline Entry Points
 
-## Data Models
+Each module exposes a main function in `__init__.py`:
 
-### Case
 ```python
-@dataclass
-class Case:
-    case_id: str
-    court_case: Optional[str]
-    agency: Optional[str]
-    incident_date: Optional[date]
-    evidence_items: list[EvidenceItem]
-    witnesses: WitnessList
-    timeline: list[TimelineEvent]
-    summary: Optional[str]
-    metadata: dict
+from third_chair.ingest import ingest_axon_package
+from third_chair.transcription import transcribe_case
+from third_chair.translation import translate_case
+from third_chair.summarization import summarize_case_evidence
 ```
 
-### EvidenceItem
-```python
-@dataclass
-class EvidenceItem:
-    id: str
-    filename: str
-    file_type: FileType  # VIDEO, AUDIO, DOCUMENT, IMAGE
-    content_type: ContentType  # BWC_FOOTAGE, CAD_LOG, etc.
-    file_path: Path
-    size_bytes: int
-    duration_seconds: Optional[float]
-    transcript: Optional[Transcript]
-    summary: Optional[str]
-    processing_status: ProcessingStatus
+CLI commands use lazy imports (import at function level) to speed startup.
+
+## Core Data Models (third_chair/models/)
+
+**Case** (`case.py`): Central container with `evidence_items`, `witnesses`, `timeline`, `propositions`. Serializes to `case.json` via `case.save()`.
+
+**EvidenceItem** (`evidence.py`): Individual file with `file_type` (VIDEO/AUDIO/DOCUMENT/IMAGE), `content_type` (BWC_FOOTAGE/CAD_LOG/etc), `transcript`, `processing_status`.
+
+**Transcript** (`transcript.py`): Contains `segments` (TranscriptSegment list), `speakers` mapping (SPEAKER_1 → name), `key_statements`.
+
+## Key CLI Commands
+
+```bash
+# Full pipeline
+third-chair process case.zip --output ./my_case
+
+# Individual steps
+third-chair ingest case.zip --output ./my_case --court-case "50-2025-CF-001234"
+third-chair transcribe ./my_case --whisper-model medium --no-diarization
+third-chair translate ./my_case
+third-chair summarize ./my_case
+third-chair report ./my_case --format all --bates-prefix DEF
+
+# Interactive
+third-chair tui                    # TUI with case selection
+third-chair chat ./my_case         # Research assistant
 ```
-
-### Transcript
-```python
-@dataclass
-class Transcript:
-    evidence_id: str
-    segments: list[TranscriptSegment]
-    speakers: dict[str, str]  # SPEAKER_1 -> "Officer Smith"
-    key_statements: list[TranscriptSegment]
-```
-
-## CLI Commands
-
-| Command | Function | Key Options |
-|---------|----------|-------------|
-| `tui` | Terminal graphical interface | `--search-path` |
-| `process` | Full pipeline | `--skip-transcription`, `--skip-translation`, `--skip-summarization` |
-| `ingest` | Extract ZIP | `--output`, `--court-case` |
-| `transcribe` | Whisper transcription | `--whisper-model`, `--no-diarization` |
-| `translate` | Spanish translation | `--ollama-model` |
-| `documents` | PDF/DOCX/OCR | `--no-ocr`, `--extract` |
-| `summarize` | AI summaries | `--timeline`, `--output` |
-| `extract-propositions` | Skanda Framework analysis | `--issue`, `--proponent`, `--min-confidence` |
-| `witnesses` | Witness management | `--import`, `--rename`, `--suggest` |
-| `report` | Generate reports | `--format`, `--bates-prefix`, `--prepared-by` |
-| `vision` | Analyze images with AI | `--all`, `--image`, `--type` |
-| `viewing-guide` | Video timestamp guide | `--flags`, `--output` |
-| `chat` | Interactive research | `--query` |
-| `info` | ZIP contents | - |
-| `status` | Case status | - |
-| `version` | Version info | - |
 
 ## Hardware Constraints
 
-This project is designed for CPU-only inference:
-- Intel UHD 630 iGPU (no CUDA available)
-- Ollama runs one model at a time to avoid CPU thrashing
-- Whisper uses int8 compute type for CPU optimization
-- Typical response times: ~2s per Ollama inference when single model loaded
-
-## Development
-
-### Running the CLI
-```bash
-python -m third_chair.cli.main process input.zip
-# or after installing:
-third-chair process input.zip
-```
-
-### Testing
-```bash
-pytest tests/ -v
-```
-
-### Dependencies
-- `faster-whisper` - Transcription (CPU optimized)
-- `pyannote.audio` - Speaker diarization (requires HF_TOKEN)
-- `httpx` - Ollama API client
-- `typer` + `rich` - CLI
-- `textual` - Terminal user interface
-- `pdfplumber` + `pytesseract` - PDF/image OCR
-- `python-docx` - Word documents
-- `reportlab` - PDF generation
+CPU-only inference environment (Intel UHD 630 iGPU, no CUDA):
+- Ollama: Run ONE model at a time to avoid CPU thrashing (1800%+ CPU usage)
+- Whisper: Uses int8 compute type for CPU optimization
+- Typical Ollama response: ~2s when healthy, 30s+ when multiple models compete
 
 ## Common Tasks
 
@@ -217,79 +155,33 @@ HF_TOKEN=  # Required for diarization
 
 ## Error Handling
 
-- Processing errors are stored in `evidence.error_message`
-- Low confidence segments are flagged with `ReviewFlag.LOW_CONFIDENCE`
-- Items needing review are tracked in `case.metadata["items_needing_review"]`
-
-## Output Files
-
-After full processing:
-- `case.json` - Serialized Case object
-- `reports/case_report.docx` - Word document
-- `reports/case_report.pdf` - PDF with Bates numbering
-- `reports/evidence_inventory.csv` - Evidence catalog
-- `reports/timeline.txt` - Chronological events
-- `reports/key_statements.txt` - Flagged statements
-- `transcripts/*.txt` - Plain text transcripts
-- `transcripts/*.srt` - Subtitle files
+- Processing errors: `evidence.error_message`
+- Low confidence segments: `ReviewFlag.LOW_CONFIDENCE` flag
+- Items needing review: `case.metadata["items_needing_review"]`
 
 ## Skanda Framework (Legal Proposition Evaluation)
 
-The Skanda Framework treats "fact" as an earned output label, not a stored boolean. Propositions contain proposits (atomic evidence-backed claims) that are evaluated deterministically.
+The Skanda Framework treats "fact" as an earned output label, not a stored boolean. See `models/proposition.py` for full model definitions.
 
 ### Core Rules
 
-1. **Never create a "fact" field.** Instead, create a `Proposition` with a `skanda` and an `evaluation`.
-2. **Every `Proposit` must have at least one `EvidenceRef`.** No bare assertions without evidence anchors.
-3. **The evaluator must be deterministic** and output explanations with driver proposits.
-4. **LLM-produced JSON must be validated** against schema and rejected if lacking evidence references.
+1. **Never create a "fact" field.** Create a `Proposition` with `skanda` and `evaluation` instead.
+2. **Every `Proposit` must have at least one `EvidenceRef`.** No bare assertions.
+3. **Evaluator must be deterministic** with explanations citing driver proposits.
+4. **Validate LLM JSON** against schema; reject if missing evidence references.
 
-### Key Models
+### Key Concepts
 
-```python
-@dataclass
-class Proposition:
-    id: str
-    statement: str                    # Natural language assertion
-    proponent: ProponentInfo          # Which party advances it
-    material_issue: MaterialIssueRef  # Legal element it addresses
-    skanda: Skanda                    # Basket of proposits
-    evaluation: EvaluationSnapshot    # Computed, not stored as truth
-
-@dataclass
-class Proposit:
-    id: str
-    claim: str                        # One testable claim
-    kind: PropositionKind             # direct_observation, admission, inference
-    polarity: Polarity                # supports, undermines
-    evidence_refs: list[EvidenceRef]  # MUST have at least one
-    tests: list[PropositionTest]      # Confidence, reliability tests
-
-@dataclass
-class EvaluationSnapshot:
-    holds_under_scrutiny: HoldsStatus # yes, no, uncertain (tri-state)
-    weight: float                     # 0.0-1.0 for attention priority
-    probative_value: float            # Relative to material issue
-    burden_contribution: BurdenContribution
-    drivers: EvaluationDrivers        # Top supporting/undermining proposits
-```
-
-### Evaluation Logic
-
-- `holds_under_scrutiny`: HOLDS if support - undermine > threshold; FAILS if negative; else UNCERTAIN
-- `weight`: Combines source reliability, corroboration, specificity
-- `probative_value`: Higher if directly addresses material issue elements
-- Tests: personal_knowledge, transcript_confidence, source_reliability, corroboration, contradiction
+- **Proposition**: Assertion with `skanda` (basket of proposits) and computed `evaluation`
+- **Proposit**: Atomic claim with `polarity` (supports/undermines) and `evidence_refs`
+- **EvaluationSnapshot**: `holds_under_scrutiny` (tri-state: yes/no/uncertain), `weight`, `probative_value`
 
 ### Usage
 
 ```python
 from third_chair.analysis import extract_propositions_from_case, evaluate_all_propositions
 
-# Extract propositions from flagged segments
 propositions = extract_propositions_from_case(case)
 case.propositions = propositions
-
-# Evaluate all propositions deterministically
 evaluate_all_propositions(case)
 ```
