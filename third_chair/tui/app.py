@@ -314,7 +314,15 @@ class ThirdChairApp(App):
 
         lines = [f"[bold]Timeline ({len(timeline)} events)[/bold]"]
         for event in timeline[:20]:
-            timestamp = event.timestamp.strftime("%H:%M:%S") if event.timestamp else "?"
+            # Prefer timecode_seconds if available (recording offset)
+            if event.metadata and "timecode_seconds" in event.metadata:
+                total_secs = int(event.metadata["timecode_seconds"])
+                mins, secs = divmod(total_secs, 60)
+                timestamp = f"{mins}:{secs:02d}"
+            elif event.timestamp:
+                timestamp = event.timestamp.strftime("%H:%M:%S")
+            else:
+                timestamp = "?"
             desc = event.description[:60] + "..." if len(event.description) > 60 else event.description
             lines.append(f"  [{timestamp}] {desc}")
 

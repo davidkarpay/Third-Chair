@@ -25,17 +25,22 @@ class TimelineEntry:
     speaker: Optional[str] = None
     importance: str = "normal"  # normal, high, critical
 
+    timecode_seconds: Optional[float] = None  # Recording offset in seconds
+
     def to_timeline_event(self) -> TimelineEvent:
         """Convert to TimelineEvent model."""
+        metadata = {
+            "speaker": self.speaker,
+            "importance": self.importance,
+        }
+        if self.timecode_seconds is not None:
+            metadata["timecode_seconds"] = self.timecode_seconds
         return TimelineEvent(
             timestamp=self.timestamp,
             description=self.description,
             evidence_id=self.evidence_id,
             source=self.source_type,
-            metadata={
-                "speaker": self.speaker,
-                "importance": self.importance,
-            },
+            metadata=metadata,
         )
 
 
@@ -91,6 +96,7 @@ def _extract_from_transcript(
         evidence_id=evidence.id,
         source_type="transcript",
         importance="normal",
+        timecode_seconds=0.0,
     ))
 
     # Extract significant events from transcript
@@ -127,6 +133,7 @@ def _extract_from_transcript(
                 source_type="transcript",
                 speaker=segment.speaker,
                 importance=event["importance"],
+                timecode_seconds=segment.start_time,
             ))
 
     # Add key statements
@@ -138,6 +145,7 @@ def _extract_from_transcript(
             source_type="transcript",
             speaker=statement.speaker,
             importance="high",
+            timecode_seconds=statement.start_time,
         ))
 
     return entries
