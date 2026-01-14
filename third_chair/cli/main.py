@@ -659,6 +659,135 @@ def summarize(
     console.print(f"  Timeline events: {len(case.timeline)}")
 
 
+@app.command(name="extract-propositions")
+def extract_propositions(
+    case_dir: Path = typer.Argument(..., help="Case directory"),
+    issue: str = typer.Option(
+        "self_defense",
+        "--issue", "-i",
+        help="Default material issue (self_defense, assault, battery)",
+    ),
+    proponent: str = typer.Option(
+        "Defense",
+        "--proponent", "-p",
+        help="Default proponent party (Defense, State)",
+    ),
+    min_confidence: float = typer.Option(
+        0.5,
+        "--min-confidence",
+        help="Minimum transcript confidence threshold",
+    ),
+    include_timeline: bool = typer.Option(
+        True,
+        "--include-timeline/--no-timeline",
+        help="Include timeline events as proposits",
+    ),
+):
+    """
+    Extract propositions from case evidence using the Skanda Framework.
+
+    Seeds proposits from:
+    - Flagged transcript segments (threats, violence)
+    - Key statements
+    - Timeline events
+    - Vision analysis findings
+
+    Groups into propositions and evaluates deterministically.
+    """
+    import json
+    from ..models import Case
+    from ..analysis import (
+        extract_propositions_from_case,
+        evaluate_all_propositions,
+    )
+    from ..analysis.proposition_extractor import ExtractionConfig
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    with open(case_file) as f:
+        data = json.load(f)
+    case = Case.from_dict(data)
+
+    console.print(f"\n[bold]Extracting Propositions: {case.case_id}[/bold]\n")
+
+    # Configure extraction
+    config = ExtractionConfig(
+        include_threats=True,
+        include_violence=True,
+        include_low_confidence=False,
+        include_timeline=include_timeline,
+        min_confidence=min_confidence,
+        default_proponent=proponent,
+        default_issue=issue,
+    )
+
+    # Extract propositions
+    console.print("[bold]Step 1: Extracting proposits from evidence...[/bold]")
+    propositions = extract_propositions_from_case(case, config)
+    case.propositions = propositions
+
+    if not propositions:
+        console.print("[yellow]No propositions extracted. Ensure case has flagged segments.[/yellow]")
+        return
+
+    total_proposits = sum(len(p.skanda.proposits) for p in propositions)
+    console.print(f"  Extracted {total_proposits} proposits into {len(propositions)} proposition(s)")
+
+    # Evaluate propositions
+    console.print("\n[bold]Step 2: Evaluating propositions...[/bold]")
+    evaluate_all_propositions(case)
+
+    # Display results
+    table = Table(title="Proposition Evaluation Results")
+    table.add_column("ID", style="dim")
+    table.add_column("Statement", max_width=40)
+    table.add_column("Holds", justify="center")
+    table.add_column("Weight", justify="right")
+    table.add_column("Probative", justify="right")
+    table.add_column("Proposits", justify="right")
+
+    for prop in case.propositions:
+        eval_snap = prop.evaluation
+        holds_str = str(eval_snap.holds_under_scrutiny.value) if eval_snap else "-"
+        if holds_str == "holds":
+            holds_str = "[green]holds[/green]"
+        elif holds_str == "fails":
+            holds_str = "[red]fails[/red]"
+        else:
+            holds_str = "[yellow]uncertain[/yellow]"
+
+        table.add_row(
+            prop.id,
+            prop.statement[:40] + "..." if len(prop.statement) > 40 else prop.statement,
+            holds_str,
+            f"{eval_snap.weight:.2f}" if eval_snap else "-",
+            f"{eval_snap.probative_value:.2f}" if eval_snap else "-",
+            str(len(prop.skanda.proposits)),
+        )
+
+    console.print(table)
+
+    # Save case
+    console.print("\n[bold]Step 3: Saving to case.json...[/bold]")
+    with open(case_file, "w") as f:
+        json.dump(case.to_dict(), f, indent=2, default=str)
+
+    console.print(f"[green]Saved {len(propositions)} proposition(s) with {total_proposits} proposits[/green]")
+
+    # Show evaluation drivers for first proposition
+    if propositions and propositions[0].evaluation:
+        eval_snap = propositions[0].evaluation
+        if eval_snap.drivers:
+            console.print("\n[bold]Top Evaluation Drivers:[/bold]")
+            if eval_snap.drivers.top_supporting:
+                console.print(f"  [green]Supporting:[/green] {len(eval_snap.drivers.top_supporting)} proposits")
+            if eval_snap.drivers.top_undermining:
+                console.print(f"  [red]Undermining:[/red] {len(eval_snap.drivers.top_undermining)} proposits")
+
+
 @app.command()
 def report(
     case_dir: Path = typer.Argument(..., help="Case directory"),
@@ -973,6 +1102,308 @@ def viewing_guide(
     )
 
     console.print(f"\n[green]Viewing guide written to: {output_path}[/green]")
+
+
+@app.command()
+def tui(
+    case_dir: Optional[Path] = typer.Argument(
+        None,
+        help="Path to case directory (skips case selection if provided)",
+    ),
+    search_path: Optional[Path] = typer.Option(
+        None,
+        "--search-path", "-s",
+        help="Additional path to search for cases",
+    ),
+):
+    """
+    Launch the Third Chair graphical interface.
+
+    Opens a terminal-based interface with:
+    - Case file navigation (left panel)
+    - Research chat assistant (right panel)
+
+    If no case directory is specified, displays a list of
+    available cases for selection.
+
+    Keyboard shortcuts:
+    - Tab: Switch between panels
+    - Q: Quit
+    - ?: Show help
+
+    Example:
+        third-chair tui
+        third-chair tui ./Case-9420250016631
+        third-chair tui --search-path /mnt/d/cases
+    """
+    from ..tui import run_tui
+
+    # Build search paths
+    search_paths = [Path.cwd()]
+
+    # Add common case locations
+    common_paths = [
+        Path("/mnt/d/Third_Chair"),
+        Path("/mnt/c/Third_Chair"),
+        Path.home() / "Third_Chair",
+    ]
+    for p in common_paths:
+        if p.exists() and p not in search_paths:
+            search_paths.append(p)
+
+    # Add user-specified search path
+    if search_path and search_path.exists():
+        search_paths.insert(0, search_path)
+
+    # If case_dir provided, validate it
+    if case_dir:
+        case_file = case_dir / "case.json"
+        if not case_file.exists():
+            console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+            raise typer.Exit(1)
+
+    console.print("[dim]Launching Third Chair TUI...[/dim]")
+    run_tui(case_path=case_dir, search_paths=search_paths)
+
+
+@app.command()
+def chat(
+    case_dir: Path = typer.Argument(..., help="Path to processed case directory"),
+    query: Optional[str] = typer.Option(
+        None,
+        "--query", "-q",
+        help="Single query to run (non-interactive mode)",
+    ),
+):
+    """
+    Interactive chat interface for case research.
+
+    Start an interactive session to query case evidence using natural language.
+    Available commands:
+      - search <query>: Search transcripts for keywords
+      - threats: Show threat statements
+      - violence: Show violence statements
+      - witnesses: List witnesses
+      - case: Show case info
+      - timeline: Show timeline
+      - propositions: List propositions (if extracted)
+      - tools: List all available tools
+      - help: Show help
+      - quit: Exit
+
+    Example:
+      third-chair chat ./case_output
+      third-chair chat ./case_output --query "search knife"
+    """
+    from rich.panel import Panel
+    from rich.markdown import Markdown
+
+    from ..models import Case
+    from ..chat import ToolRegistry
+
+    # Load case
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[dim]Loading case from {case_file}...[/dim]")
+    case = Case.load(case_file)
+
+    # Create registry
+    registry = ToolRegistry(case)
+
+    # Show header
+    console.print(Panel(
+        f"[bold]Third Chair Chat[/bold]\n"
+        f"Case: {case.case_id}\n"
+        f"Evidence: {case.evidence_count} items | "
+        f"Witnesses: {len(case.witnesses.witnesses)} | "
+        f"Propositions: {case.proposition_count}",
+        title="Research Assistant",
+        border_style="blue",
+    ))
+
+    # Single query mode
+    if query:
+        _process_chat_command(registry, query, console)
+        return
+
+    # Interactive mode
+    console.print("\n[dim]Type 'help' for commands, 'quit' to exit[/dim]\n")
+
+    while True:
+        try:
+            cmd = console.input("[bold blue]>[/bold blue] ").strip()
+
+            if not cmd:
+                continue
+
+            if cmd.lower() in ("quit", "exit", "q"):
+                console.print("[dim]Goodbye![/dim]")
+                break
+
+            _process_chat_command(registry, cmd, console)
+
+        except KeyboardInterrupt:
+            console.print("\n[dim]Goodbye![/dim]")
+            break
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+
+def _process_chat_command(registry, cmd: str, console) -> None:
+    """Process a chat command."""
+    from rich.table import Table
+
+    cmd_lower = cmd.lower()
+
+    if cmd_lower == "help":
+        console.print("""
+[bold]Available Commands:[/bold]
+  [cyan]search <query>[/cyan]    Search transcripts for keywords
+  [cyan]threats[/cyan]           Show statements with threat keywords
+  [cyan]violence[/cyan]          Show statements with violence keywords
+  [cyan]witnesses[/cyan]         List all witnesses
+  [cyan]case[/cyan]              Show case information
+  [cyan]timeline[/cyan]          Show case timeline
+  [cyan]propositions[/cyan]      List propositions (Skanda framework)
+  [cyan]tools[/cyan]             List all available tools
+  [cyan]who said <quote>[/cyan]  Find who said a specific quote
+  [cyan]quit[/cyan]              Exit the chat
+""")
+
+    elif cmd_lower == "tools":
+        table = Table(title="Available Tools")
+        table.add_column("Tool", style="cyan")
+        table.add_column("Description")
+        for tool in registry.list_tools():
+            table.add_row(tool.name, tool.description[:60] + "...")
+        console.print(table)
+
+    elif cmd_lower == "case":
+        result = registry.invoke("get_case_info")
+        if result.success:
+            table = Table(title="Case Information")
+            table.add_column("Field", style="cyan")
+            table.add_column("Value")
+            for k, v in result.data.items():
+                table.add_row(k, str(v) if v else "-")
+            console.print(table)
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower == "witnesses":
+        result = registry.invoke("get_witness_list")
+        if result.success:
+            table = Table(title="Witnesses")
+            table.add_column("ID", style="dim")
+            table.add_column("Name", style="cyan")
+            table.add_column("Role")
+            table.add_column("Verified")
+            for w in result.data:
+                table.add_row(
+                    w["id"],
+                    w["name"] or "-",
+                    str(w["role"]).replace("WitnessRole.", ""),
+                    "[green]Yes[/green]" if w["verified"] else "[dim]No[/dim]",
+                )
+            console.print(table)
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower == "threats":
+        result = registry.invoke("get_flagged_statements", flag_type="THREAT_KEYWORD")
+        if result.success:
+            console.print(f"\n[bold]Threat Statements ({len(result.data)} found)[/bold]\n")
+            for i, r in enumerate(result.data[:15], 1):
+                console.print(f"[cyan]{i}.[/cyan] {r['filename']} @ [yellow]{r['timestamp']}[/yellow]")
+                console.print(f"   [{r['speaker']}]: {r['text'][:100]}...")
+                console.print()
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower == "violence":
+        result = registry.invoke("get_flagged_statements", flag_type="VIOLENCE_KEYWORD")
+        if result.success:
+            console.print(f"\n[bold]Violence Statements ({len(result.data)} found)[/bold]\n")
+            for i, r in enumerate(result.data[:15], 1):
+                console.print(f"[cyan]{i}.[/cyan] {r['filename']} @ [yellow]{r['timestamp']}[/yellow]")
+                console.print(f"   [{r['speaker']}]: {r['text'][:100]}...")
+                console.print()
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower == "timeline":
+        result = registry.invoke("get_timeline")
+        if result.success:
+            console.print(f"\n[bold]Timeline ({len(result.data)} events)[/bold]\n")
+            for i, e in enumerate(result.data[:20], 1):
+                console.print(f"[cyan]{e['timestamp'][:19]}[/cyan] - {e['description'][:80]}...")
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower == "propositions":
+        result = registry.invoke("list_propositions")
+        if result.success:
+            if not result.data:
+                console.print("[dim]No propositions extracted yet. Run proposition extraction first.[/dim]")
+            else:
+                table = Table(title="Propositions")
+                table.add_column("ID", style="cyan")
+                table.add_column("Statement")
+                table.add_column("Holds", style="bold")
+                table.add_column("Weight")
+                table.add_column("Proposits")
+                for p in result.data:
+                    holds = p.get("holds_under_scrutiny", "?")
+                    holds_style = {"holds": "[green]", "fails": "[red]", "uncertain": "[yellow]"}.get(holds, "")
+                    table.add_row(
+                        p["id"],
+                        p["statement"][:40] + "...",
+                        f"{holds_style}{holds}[/]",
+                        f"{p.get('weight', 0):.2f}" if p.get('weight') else "-",
+                        str(p.get("proposit_count", 0)),
+                    )
+                console.print(table)
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower.startswith("search "):
+        query = cmd[7:].strip()
+        if not query:
+            console.print("[yellow]Usage: search <query>[/yellow]")
+            return
+        result = registry.invoke("search_transcripts", query=query)
+        if result.success:
+            console.print(f"\n[bold]Search Results for '{query}' ({len(result.data)} found)[/bold]\n")
+            for i, r in enumerate(result.data[:15], 1):
+                console.print(f"[cyan]{i}.[/cyan] {r['filename']} @ [yellow]{r['timestamp']}[/yellow]")
+                console.print(f"   [{r['speaker']}]: {r['text'][:100]}...")
+                console.print()
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    elif cmd_lower.startswith("who said "):
+        quote = cmd[9:].strip().strip('"\'')
+        if not quote:
+            console.print("[yellow]Usage: who said <quote>[/yellow]")
+            return
+        result = registry.invoke("who_said", quote=quote)
+        if result.success:
+            if "error" in result.data:
+                console.print(f"[yellow]{result.data['error']}[/yellow]")
+            else:
+                console.print(f"\n[bold]Found:[/bold]")
+                console.print(f"  Speaker: [cyan]{result.data['speaker']}[/cyan] ({result.data.get('speaker_role', 'unknown')})")
+                console.print(f"  File: {result.data['filename']} @ [yellow]{result.data['timestamp']}[/yellow]")
+                console.print(f"  Full text: \"{result.data['full_text']}\"")
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+
+    else:
+        console.print(f"[yellow]Unknown command: {cmd}[/yellow]")
+        console.print("[dim]Type 'help' for available commands[/dim]")
 
 
 @app.command()

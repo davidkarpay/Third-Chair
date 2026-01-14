@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .evidence import EvidenceItem, ProcessingStatus
+from .proposition import MaterialIssue, Proposition
 from .witness import WitnessList
 
 
@@ -58,6 +59,8 @@ class Case:
     evidence_items: list[EvidenceItem] = field(default_factory=list)
     witnesses: WitnessList = field(default_factory=WitnessList)
     timeline: list[TimelineEvent] = field(default_factory=list)
+    propositions: list[Proposition] = field(default_factory=list)
+    material_issues: list[MaterialIssue] = field(default_factory=list)
     summary: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -143,6 +146,52 @@ class Case:
         # Keep timeline sorted by timestamp
         self.timeline.sort(key=lambda e: e.timestamp)
 
+    def add_proposition(self, proposition: Proposition) -> None:
+        """Add a proposition to the case."""
+        self.propositions.append(proposition)
+
+    def get_proposition(self, proposition_id: str) -> Optional[Proposition]:
+        """Get a proposition by ID."""
+        for prop in self.propositions:
+            if prop.id == proposition_id:
+                return prop
+        return None
+
+    def get_propositions_by_issue(self, issue_id: str) -> list[Proposition]:
+        """Get all propositions for a material issue."""
+        return [
+            p for p in self.propositions
+            if p.material_issue.issue_id == issue_id
+        ]
+
+    def get_propositions_by_proponent(self, party: str) -> list[Proposition]:
+        """Get all propositions by proponent party."""
+        return [
+            p for p in self.propositions
+            if p.proponent.party.lower() == party.lower()
+        ]
+
+    def add_material_issue(self, issue: MaterialIssue) -> None:
+        """Add a material issue to the case."""
+        self.material_issues.append(issue)
+
+    def get_material_issue(self, issue_id: str) -> Optional[MaterialIssue]:
+        """Get a material issue by ID."""
+        for issue in self.material_issues:
+            if issue.id == issue_id:
+                return issue
+        return None
+
+    @property
+    def proposition_count(self) -> int:
+        """Get total number of propositions."""
+        return len(self.propositions)
+
+    @property
+    def propositions_needing_evaluation(self) -> list[Proposition]:
+        """Get propositions that need (re)evaluation."""
+        return [p for p in self.propositions if p.needs_evaluation]
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -157,6 +206,8 @@ class Case:
             "evidence_items": [e.to_dict() for e in self.evidence_items],
             "witnesses": self.witnesses.to_dict(),
             "timeline": [e.to_dict() for e in self.timeline],
+            "propositions": [p.to_dict() for p in self.propositions],
+            "material_issues": [i.to_dict() for i in self.material_issues],
             "summary": self.summary,
             "metadata": self.metadata,
         }
@@ -176,6 +227,8 @@ class Case:
             evidence_items=[EvidenceItem.from_dict(e) for e in data.get("evidence_items", [])],
             witnesses=WitnessList.from_dict(data.get("witnesses", {})),
             timeline=[TimelineEvent.from_dict(e) for e in data.get("timeline", [])],
+            propositions=[Proposition.from_dict(p) for p in data.get("propositions", [])],
+            material_issues=[MaterialIssue.from_dict(i) for i in data.get("material_issues", [])],
             summary=data.get("summary"),
             metadata=data.get("metadata", {}),
         )
