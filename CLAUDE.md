@@ -43,10 +43,21 @@ third_chair/
 │   ├── pdf_generator.py      # PDF with Bates numbering
 │   └── attorney_report.py    # Unified report generation
 ├── models/          # Data models
-│   ├── case.py       # Case with evidence, witnesses, timeline
+│   ├── case.py       # Case with evidence, witnesses, timeline, propositions
 │   ├── evidence.py   # EvidenceItem with file type/content type
 │   ├── transcript.py # Transcript with segments, speakers, flags
-│   └── witness.py    # Witness with roles and speaker IDs
+│   ├── witness.py    # Witness with roles and speaker IDs
+│   └── proposition.py # Skanda Framework: Proposition, Proposit, Skanda
+├── analysis/        # Proposition analysis (Skanda Framework)
+│   ├── proposition_extractor.py # Seed proposits from evidence
+│   └── skanda_evaluator.py      # Deterministic evaluation
+├── chat/            # Chat Research Assistant
+│   ├── tools.py     # Tool definitions
+│   └── registry.py  # Tool registry for function calling
+├── tui/             # Terminal User Interface
+│   ├── app.py       # Main Textual application
+│   ├── screens.py   # Case selection screen
+│   └── widgets.py   # Directory tree, chat panel widgets
 ├── cli/             # Typer CLI interface
 │   └── main.py      # All CLI commands
 └── utils/           # Utilities
@@ -112,16 +123,22 @@ class Transcript:
 
 | Command | Function | Key Options |
 |---------|----------|-------------|
+| `tui` | Terminal graphical interface | `--search-path` |
 | `process` | Full pipeline | `--skip-transcription`, `--skip-translation`, `--skip-summarization` |
 | `ingest` | Extract ZIP | `--output`, `--court-case` |
 | `transcribe` | Whisper transcription | `--whisper-model`, `--no-diarization` |
 | `translate` | Spanish translation | `--ollama-model` |
 | `documents` | PDF/DOCX/OCR | `--no-ocr`, `--extract` |
 | `summarize` | AI summaries | `--timeline`, `--output` |
+| `extract-propositions` | Skanda Framework analysis | `--issue`, `--proponent`, `--min-confidence` |
 | `witnesses` | Witness management | `--import`, `--rename`, `--suggest` |
 | `report` | Generate reports | `--format`, `--bates-prefix`, `--prepared-by` |
+| `vision` | Analyze images with AI | `--all`, `--image`, `--type` |
+| `viewing-guide` | Video timestamp guide | `--flags`, `--output` |
+| `chat` | Interactive research | `--query` |
 | `info` | ZIP contents | - |
 | `status` | Case status | - |
+| `version` | Version info | - |
 
 ## Hardware Constraints
 
@@ -150,6 +167,7 @@ pytest tests/ -v
 - `pyannote.audio` - Speaker diarization (requires HF_TOKEN)
 - `httpx` - Ollama API client
 - `typer` + `rich` - CLI
+- `textual` - Terminal user interface
 - `pdfplumber` + `pytesseract` - PDF/image OCR
 - `python-docx` - Word documents
 - `reportlab` - PDF generation
@@ -214,3 +232,64 @@ After full processing:
 - `reports/key_statements.txt` - Flagged statements
 - `transcripts/*.txt` - Plain text transcripts
 - `transcripts/*.srt` - Subtitle files
+
+## Skanda Framework (Legal Proposition Evaluation)
+
+The Skanda Framework treats "fact" as an earned output label, not a stored boolean. Propositions contain proposits (atomic evidence-backed claims) that are evaluated deterministically.
+
+### Core Rules
+
+1. **Never create a "fact" field.** Instead, create a `Proposition` with a `skanda` and an `evaluation`.
+2. **Every `Proposit` must have at least one `EvidenceRef`.** No bare assertions without evidence anchors.
+3. **The evaluator must be deterministic** and output explanations with driver proposits.
+4. **LLM-produced JSON must be validated** against schema and rejected if lacking evidence references.
+
+### Key Models
+
+```python
+@dataclass
+class Proposition:
+    id: str
+    statement: str                    # Natural language assertion
+    proponent: ProponentInfo          # Which party advances it
+    material_issue: MaterialIssueRef  # Legal element it addresses
+    skanda: Skanda                    # Basket of proposits
+    evaluation: EvaluationSnapshot    # Computed, not stored as truth
+
+@dataclass
+class Proposit:
+    id: str
+    claim: str                        # One testable claim
+    kind: PropositionKind             # direct_observation, admission, inference
+    polarity: Polarity                # supports, undermines
+    evidence_refs: list[EvidenceRef]  # MUST have at least one
+    tests: list[PropositionTest]      # Confidence, reliability tests
+
+@dataclass
+class EvaluationSnapshot:
+    holds_under_scrutiny: HoldsStatus # yes, no, uncertain (tri-state)
+    weight: float                     # 0.0-1.0 for attention priority
+    probative_value: float            # Relative to material issue
+    burden_contribution: BurdenContribution
+    drivers: EvaluationDrivers        # Top supporting/undermining proposits
+```
+
+### Evaluation Logic
+
+- `holds_under_scrutiny`: HOLDS if support - undermine > threshold; FAILS if negative; else UNCERTAIN
+- `weight`: Combines source reliability, corroboration, specificity
+- `probative_value`: Higher if directly addresses material issue elements
+- Tests: personal_knowledge, transcript_confidence, source_reliability, corroboration, contradiction
+
+### Usage
+
+```python
+from third_chair.analysis import extract_propositions_from_case, evaluate_all_propositions
+
+# Extract propositions from flagged segments
+propositions = extract_propositions_from_case(case)
+case.propositions = propositions
+
+# Evaluate all propositions deterministically
+evaluate_all_propositions(case)
+```

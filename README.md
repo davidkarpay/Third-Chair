@@ -1,10 +1,10 @@
 # Third Chair
 
-Legal discovery processing tool for Axon evidence packages. Third Chair extracts, transcribes, translates, and organizes evidence from body-worn camera exports, creating comprehensive reports for attorneys.
+Third Chair is a legal discovery processing tool designed for defense attorneys working with Axon body-worn camera evidence packages. The application extracts, transcribes, translates, and organizes evidence from law enforcement exports, generating comprehensive attorney-ready reports with Bates numbering.
 
 ## Features
 
-- **Evidence Ingestion**: Extract and classify files from Axon ZIP exports
+- **Evidence Ingestion**: Extract and classify files from Axon ZIP exports automatically
 - **Transcription**: CPU-optimized Whisper transcription with speaker diarization
 - **Translation**: Spanish/English translation via local Ollama (aya-expanse:8b)
 - **Language Detection**: Automatic detection of Spanish content and code-switching
@@ -12,10 +12,12 @@ Legal discovery processing tool for Axon evidence packages. Third Chair extracts
 - **Document Processing**: OCR for scanned PDFs and images
 - **AI Summarization**: Generate case summaries, timelines, and key findings
 - **Report Generation**: Create attorney-ready reports with Bates numbering
+- **Proposition Analysis**: Skanda Framework for evidence-backed legal proposition evaluation
+- **Interactive Research**: Chat interface and TUI for case exploration
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10 or higher
 - FFmpeg (for audio/video processing)
 - Ollama (for translation and summarization)
 - Tesseract OCR (optional, for scanned documents)
@@ -35,13 +37,10 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -e .
 
-# Install Tesseract (Ubuntu/Debian)
-sudo apt-get install tesseract-ocr
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get install tesseract-ocr ffmpeg
 
-# Install FFmpeg (Ubuntu/Debian)
-sudo apt-get install ffmpeg
-
-# Start Ollama and pull models
+# Start Ollama and pull required models
 ollama serve
 ollama pull aya-expanse:8b
 ollama pull mistral:7b
@@ -49,33 +48,87 @@ ollama pull mistral:7b
 
 ## Quick Start
 
+### Graphical Interface
+
+Launch the terminal-based graphical interface to browse cases and research evidence:
+
 ```bash
-# Process an Axon evidence package (full pipeline)
+third-chair tui
+```
+
+The TUI provides:
+- Case selection from available processed cases
+- Directory tree navigation (left panel)
+- Interactive research chat (right panel)
+
+### Command Line Processing
+
+Process an Axon evidence package through the complete pipeline:
+
+```bash
+# Full pipeline processing
 third-chair process case_export.zip --output ./my_case
 
-# Or step by step:
+# Step-by-step processing
 third-chair ingest case_export.zip --output ./my_case
 third-chair transcribe ./my_case
 third-chair translate ./my_case
 third-chair documents ./my_case
 third-chair summarize ./my_case
+third-chair extract-propositions ./my_case
 third-chair report ./my_case --format all
 ```
 
-## Commands
+### Research Chat
+
+Query case evidence using natural language:
+
+```bash
+# Interactive chat session
+third-chair chat ./my_case
+
+# Single query mode
+third-chair chat ./my_case --query "search knife"
+```
+
+## Commands Reference
 
 | Command | Description |
 |---------|-------------|
+| `tui` | Launch graphical interface with case selection and research chat |
 | `process` | Full pipeline: ingest, transcribe, translate, summarize, report |
 | `ingest` | Extract and classify evidence from ZIP |
 | `transcribe` | Transcribe audio/video files |
 | `translate` | Translate Spanish content |
-| `documents` | Process PDFs, Word docs, and images |
+| `documents` | Process PDFs, Word documents, and images |
 | `summarize` | Generate AI summaries and timeline |
+| `extract-propositions` | Extract legal propositions using Skanda Framework |
 | `witnesses` | Manage witnesses (import, rename, match) |
 | `report` | Generate attorney reports (DOCX, PDF) |
-| `info` | Show ZIP contents without extracting |
-| `status` | Show processing status of a case |
+| `vision` | Analyze evidence photos using vision AI |
+| `viewing-guide` | Generate recommended viewing timestamps |
+| `chat` | Interactive research assistant |
+| `info` | Display ZIP contents without extracting |
+| `status` | Display processing status of a case |
+| `version` | Display version information |
+
+### TUI Command
+
+```bash
+# Launch with case selection
+third-chair tui
+
+# Open specific case directly
+third-chair tui /path/to/case
+
+# Search additional path for cases
+third-chair tui --search-path /mnt/d/cases
+```
+
+Keyboard shortcuts:
+- Tab: Switch between directory tree and chat panels
+- Q: Quit application
+- ?: Display help
 
 ### Process Command Options
 
@@ -83,24 +136,34 @@ third-chair report ./my_case --format all
 third-chair process case.zip \
     --output ./my_case \
     --court-case "50-2025-CF-001234" \
-    --skip-transcription \      # Skip audio/video transcription
-    --skip-translation \        # Skip Spanish translation
-    --skip-summarization \      # Skip AI summarization
-    --no-diarization            # Disable speaker diarization
+    --skip-transcription \
+    --skip-translation \
+    --skip-summarization \
+    --no-diarization
 ```
 
 ### Report Command Options
 
 ```bash
 third-chair report ./my_case \
-    --format all \              # docx, pdf, text, or all
-    --bates-prefix DEF \        # Bates number prefix
-    --bates-start 1 \           # Starting Bates number
-    --prepared-by "John Doe" \  # Report preparer name
-    --include-transcripts       # Include full transcripts
+    --format all \
+    --bates-prefix DEF \
+    --bates-start 1 \
+    --prepared-by "John Doe" \
+    --include-transcripts
 ```
 
-### Witness Command Options
+### Extract Propositions Command
+
+```bash
+third-chair extract-propositions ./my_case \
+    --issue self_defense \
+    --proponent Defense \
+    --min-confidence 0.5 \
+    --include-timeline
+```
+
+### Witness Management
 
 ```bash
 # Import witness list from file
@@ -115,6 +178,55 @@ third-chair witnesses ./my_case --rename "SPEAKER_1=Officer John Smith"
 # Suggest names for unnamed speakers
 third-chair witnesses ./my_case --suggest
 ```
+
+### Vision Analysis
+
+Analyze evidence photos using vision AI (requires qwen2.5vl:3b model):
+
+```bash
+# Analyze all images in the case
+third-chair vision ./my_case --all
+
+# Analyze a specific image
+third-chair vision ./my_case --image evidence_photo.jpg
+
+# Use specialized prompt type
+third-chair vision ./my_case --image photo.jpg --type injury
+
+# Available prompt types: general, scene, injury, property, vehicle, document
+```
+
+### Viewing Guide
+
+Generate recommended video timestamps for quick review:
+
+```bash
+# Generate viewing guide with all flagged moments
+third-chair viewing-guide ./my_case
+
+# Filter by specific flags
+third-chair viewing-guide ./my_case --flags THREAT_KEYWORD,VIOLENCE_KEYWORD
+
+# Custom output path
+third-chair viewing-guide ./my_case --output ./review_timestamps.txt
+```
+
+### Chat Commands
+
+When using the chat interface (`third-chair chat` or within TUI):
+
+| Command | Description |
+|---------|-------------|
+| `search <query>` | Search transcripts for keywords |
+| `threats` | Display statements flagged as threats |
+| `violence` | Display statements flagged as violence |
+| `witnesses` | List all witnesses |
+| `case` | Display case information |
+| `timeline` | Display timeline of events |
+| `propositions` | List extracted propositions |
+| `who said <quote>` | Find speaker of a specific quote |
+| `tools` | List all available tools |
+| `help` | Display command help |
 
 ## Configuration
 
@@ -143,28 +255,44 @@ BATES_PREFIX=DEF              # Default Bates prefix
 
 ```
 case_output/
-├── case.json                 # Full case data with metadata
-├── extracted/                # Raw extracted files
-│   ├── videos/
-│   ├── audio/
-│   ├── documents/
-│   └── images/
-├── transcripts/              # Generated transcripts
-│   ├── evidence_001.txt      # Plain text
-│   ├── evidence_001.srt      # Subtitles
-│   └── evidence_001.json     # Structured data
-├── summaries/
-│   └── case_summary.txt      # Executive summary
-├── reports/
-│   ├── case_report.docx      # Word document
-│   ├── case_report.pdf       # PDF with Bates numbering
-│   ├── evidence_inventory.csv
-│   ├── witness_list.txt
-│   ├── timeline.txt
-│   └── key_statements.txt
-└── review/
-    └── low_confidence.json   # Items needing human review
+    case.json                 # Complete case data with metadata
+    extracted/                # Raw extracted files
+        (video, audio, document, and image files)
+    transcripts/              # Generated transcripts
+        evidence_001.txt      # Plain text transcript
+        evidence_001.srt      # Subtitle file
+        evidence_001.json     # Structured transcript data
+    summaries/
+        case_summary.txt      # Executive summary
+    reports/
+        case_report.docx      # Word document report
+        case_report.pdf       # PDF with Bates numbering
+        evidence_inventory.csv
+        witness_list.txt
+        timeline.txt
+        key_statements.txt
+        viewing_guide.txt     # Recommended video timestamps
+    review/
+        low_confidence.json   # Items requiring human review
 ```
+
+## Skanda Framework
+
+Third Chair implements the Skanda Framework for legal proposition evaluation. This framework treats "fact" as an earned output label rather than a stored boolean value.
+
+### Key Concepts
+
+- **Proposition**: An assertion that may be advanced at trial, with associated evidence
+- **Proposit**: An atomic, testable mini-proposition backed by specific evidence references
+- **Skanda**: A basket (collection) of proposits supporting or undermining a proposition
+- **Evaluation Snapshot**: Computed values (holds/fails/uncertain, weight, probative value)
+
+### Evaluation Process
+
+1. Proposits are extracted from flagged transcript segments, key statements, and timeline events
+2. Each proposit undergoes deterministic tests (personal knowledge, transcript confidence, corroboration)
+3. Propositions are evaluated based on supporting vs. undermining proposit scores
+4. Results indicate whether a proposition "holds under scrutiny" with associated weight
 
 ## Supported File Types
 
@@ -188,47 +316,43 @@ case_output/
 
 Third Chair is optimized for CPU-only inference:
 
-- **Transcription**: ~2-3x realtime (10 min video = 20-30 min processing)
-- **Translation**: ~2 seconds per segment via Ollama
-- **Summarization**: ~5-10 seconds per summary
-- **Memory**: 8GB+ RAM recommended (16GB for large models)
+- **Transcription**: Approximately 2-3x realtime (10 minute video requires 20-30 minutes processing)
+- **Translation**: Approximately 2 seconds per segment via Ollama
+- **Summarization**: Approximately 5-10 seconds per summary
+- **Memory**: 8GB RAM minimum, 16GB recommended for large models
 
-### Performance Tips
+### Performance Recommendations
 
-1. Use `medium` Whisper model for best quality/speed balance
-2. Run only one Ollama model at a time to avoid CPU thrashing
-3. Use `--skip-diarization` if speaker labels aren't needed
-4. Process cases in batches during off-hours
+1. Use the `medium` Whisper model for optimal quality/speed balance
+2. Run only one Ollama model at a time to prevent CPU resource contention
+3. Use `--skip-diarization` when speaker labels are not required
+4. Process cases in batches during off-hours for large evidence packages
 
-## Module Overview
+## Module Structure
 
 ```
 third_chair/
-├── config/          # Configuration management
-├── ingest/          # Evidence intake and classification
-├── transcription/   # Audio/video transcription
-├── translation/     # Language detection and translation
-├── witnesses/       # Witness management
-├── documents/       # Document processing (PDF, DOCX, OCR)
-├── summarization/   # AI summaries and timeline
-├── reports/         # Report generation (DOCX, PDF)
-├── models/          # Data models (Case, Evidence, Transcript)
-├── cli/             # Command-line interface
-└── utils/           # Logging, hashing, place names
+    config/          # Configuration management
+    ingest/          # Evidence intake and classification
+    transcription/   # Audio/video transcription
+    translation/     # Language detection and translation
+    witnesses/       # Witness management
+    documents/       # Document processing (PDF, DOCX, OCR)
+    summarization/   # AI summaries and timeline
+    analysis/        # Proposition extraction and evaluation
+    reports/         # Report generation (DOCX, PDF)
+    chat/            # Research assistant tools
+    tui/             # Terminal user interface
+    models/          # Data models (Case, Evidence, Transcript, Proposition)
+    cli/             # Command-line interface
+    utils/           # Logging, hashing, place names
 ```
 
 ## License
 
 MIT License
 
-## Related Projects
-
-- [Axon Transcript Translator](https://github.com/davidkarpay/spanish_translator_nllb_diarization) - Spanish/English transcript translation
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
 ## Support
 
-For issues or feature requests, please [open an issue](https://github.com/davidkarpay/Third-Chair/issues).
+For issues or feature requests, please open an issue at:
+https://github.com/davidkarpay/Third-Chair/issues

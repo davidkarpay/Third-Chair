@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Third Chair User Guide</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+
+        .container {
+            display: flex;
+            gap: 30px;
+        }
+
+        nav {
+            width: 250px;
+            position: sticky;
+            top: 20px;
+            align-self: flex-start;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        nav h3 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        nav ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        nav li {
+            margin: 8px 0;
+        }
+
+        nav a {
+            color: #3498db;
+            text-decoration: none;
+            display: block;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+
+        nav a:hover {
+            background-color: #ecf0f1;
+        }
+
+        main {
+            flex: 1;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 15px;
+        }
+
+        h2 {
+            color: #2c3e50;
+            margin-top: 40px;
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+        }
+
+        h3 {
+            color: #34495e;
+            margin-top: 25px;
+        }
+
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "Consolas", "Monaco", monospace;
+            font-size: 0.9em;
+        }
+
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        .note {
+            background-color: #e8f4fd;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .warning {
+            background-color: #fdf2e8;
+            border-left: 4px solid #e67e22;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .keyboard-shortcut {
+            display: inline-block;
+            background: #ecf0f1;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-family: monospace;
+            font-size: 0.85em;
+        }
+
+        @media print {
+            nav {
+                display: none;
+            }
+
+            .container {
+                display: block;
+            }
+
+            body {
+                background: white;
+            }
+
+            main {
+                box-shadow: none;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            nav {
+                width: 100%;
+                position: relative;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <h3>Contents</h3>
+            <ul>
+                <li><a href="#introduction">Introduction</a></li>
+                <li><a href="#getting-started">Getting Started</a></li>
+                <li><a href="#processing-cases">Processing a Case</a></li>
+                <li><a href="#using-tui">Using the TUI</a></li>
+                <li><a href="#chat-commands">Chat Commands</a></li>
+                <li><a href="#vision-analysis">Vision Analysis</a></li>
+                <li><a href="#viewing-guide">Viewing Guide</a></li>
+                <li><a href="#reports">Report Generation</a></li>
+                <li><a href="#skanda">Skanda Framework</a></li>
+                <li><a href="#troubleshooting">Troubleshooting</a></li>
+            </ul>
+        </nav>
+
+        <main>
+            <h1>Third Chair User Guide</h1>
+
+            <section id="introduction">
+                <h2>Introduction</h2>
+
+                <p>Third Chair is a legal discovery processing tool designed specifically for defense attorneys working with Axon body-worn camera evidence packages. The application automates the extraction, transcription, translation, and organization of evidence from law enforcement exports, generating comprehensive attorney-ready reports.</p>
+
+                <h3>Intended Audience</h3>
+                <p>This guide is intended for:</p>
+                <ul>
+                    <li>Defense attorneys reviewing body camera footage</li>
+                    <li>Paralegals processing discovery materials</li>
+                    <li>Legal support staff organizing evidence</li>
+                </ul>
+
+                <h3>Key Capabilities</h3>
+                <ul>
+                    <li>Automatic transcription of audio and video evidence</li>
+                    <li>Spanish/English translation for bilingual content</li>
+                    <li>Speaker identification and witness tracking</li>
+                    <li>AI-powered summarization and timeline generation</li>
+                    <li>Evidence-backed proposition analysis (Skanda Framework)</li>
+                    <li>Attorney-ready reports with Bates numbering</li>
+                </ul>
+            </section>
+
+            <section id="getting-started">
+                <h2>Getting Started</h2>
+
+                <h3>Prerequisites</h3>
+                <p>Before using Third Chair, ensure the following software is installed:</p>
+                <ul>
+                    <li><strong>Python 3.10 or higher</strong> - Programming language runtime</li>
+                    <li><strong>FFmpeg</strong> - Audio and video processing</li>
+                    <li><strong>Ollama</strong> - Local AI model server for translation and summarization</li>
+                    <li><strong>Tesseract OCR</strong> (optional) - Text extraction from scanned documents</li>
+                </ul>
+
+                <h3>Installation Steps</h3>
+                <pre><code># Clone the repository
+git clone https://github.com/davidkarpay/Third-Chair.git
+cd Third-Chair
+
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install Third Chair
+pip install -e .
+
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get install tesseract-ocr ffmpeg
+
+# Configure Ollama
+ollama serve
+ollama pull aya-expanse:8b
+ollama pull mistral:7b</code></pre>
+
+                <h3>First Launch</h3>
+                <p>To verify the installation, launch the graphical interface:</p>
+                <pre><code>third-chair tui</code></pre>
+                <p>If no cases have been processed, the interface will display an empty case list. Proceed to the next section to process your first case.</p>
+            </section>
+
+            <section id="processing-cases">
+                <h2>Processing a Case</h2>
+
+                <h3>Obtaining Evidence Files</h3>
+                <p>Third Chair processes Axon evidence export packages, which are typically delivered as ZIP files containing:</p>
+                <ul>
+                    <li>Body camera video recordings (.mp4)</li>
+                    <li>Audio recordings</li>
+                    <li>Evidence photos</li>
+                    <li>Axon-generated documents</li>
+                    <li>Table of Contents spreadsheet</li>
+                </ul>
+
+                <h3>Full Pipeline Processing</h3>
+                <p>Process an entire evidence package with a single command:</p>
+                <pre><code>third-chair process evidence_export.zip --output ./Case-2025-001</code></pre>
+
+                <p>This command executes the following pipeline:</p>
+                <ol>
+                    <li><strong>Ingestion</strong>: Extract and classify all files</li>
+                    <li><strong>Transcription</strong>: Generate text transcripts from audio/video</li>
+                    <li><strong>Translation</strong>: Detect and translate Spanish content</li>
+                    <li><strong>Document Processing</strong>: Extract text from PDFs and images</li>
+                    <li><strong>Summarization</strong>: Create AI-generated summaries and timeline</li>
+                    <li><strong>Report Generation</strong>: Produce attorney-ready documents</li>
+                </ol>
+
+                <div class="note">
+                    <strong>Processing Time:</strong> A typical case with 10-20 video files may require 2-4 hours to process on a standard workstation. Processing time scales with total media duration.
+                </div>
+
+                <h3>Step-by-Step Processing</h3>
+                <p>For greater control, execute each step individually:</p>
+                <pre><code># Step 1: Extract evidence
+third-chair ingest evidence_export.zip --output ./Case-2025-001
+
+# Step 2: Transcribe media files
+third-chair transcribe ./Case-2025-001
+
+# Step 3: Translate Spanish content
+third-chair translate ./Case-2025-001
+
+# Step 4: Process documents
+third-chair documents ./Case-2025-001
+
+# Step 5: Generate summaries
+third-chair summarize ./Case-2025-001
+
+# Step 6: Extract propositions
+third-chair extract-propositions ./Case-2025-001
+
+# Step 7: Analyze images (optional)
+third-chair vision ./Case-2025-001 --all
+
+# Step 8: Generate viewing guide
+third-chair viewing-guide ./Case-2025-001
+
+# Step 9: Generate reports
+third-chair report ./Case-2025-001 --format all</code></pre>
+
+                <h3>Processing Options</h3>
+                <table>
+                    <tr>
+                        <th>Option</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>--court-case</code></td>
+                        <td>Assign court case number (e.g., "50-2025-CF-001234")</td>
+                    </tr>
+                    <tr>
+                        <td><code>--skip-transcription</code></td>
+                        <td>Skip audio/video transcription step</td>
+                    </tr>
+                    <tr>
+                        <td><code>--skip-translation</code></td>
+                        <td>Skip Spanish translation step</td>
+                    </tr>
+                    <tr>
+                        <td><code>--skip-summarization</code></td>
+                        <td>Skip AI summarization step</td>
+                    </tr>
+                    <tr>
+                        <td><code>--no-diarization</code></td>
+                        <td>Disable speaker identification</td>
+                    </tr>
+                </table>
+            </section>
+
+            <section id="using-tui">
+                <h2>Using the TUI</h2>
+
+                <p>The Terminal User Interface (TUI) provides a graphical interface for case research within the terminal environment.</p>
+
+                <h3>Launching the TUI</h3>
+                <pre><code># Launch with case selection
+third-chair tui
+
+# Open a specific case directly
+third-chair tui /path/to/Case-2025-001
+
+# Search additional directories for cases
+third-chair tui --search-path /mnt/d/cases</code></pre>
+
+                <h3>Interface Layout</h3>
+                <p>The TUI consists of three main areas:</p>
+                <ul>
+                    <li><strong>Header</strong>: Displays case information (ID, evidence count, witnesses)</li>
+                    <li><strong>Left Panel</strong>: Directory tree for navigating case files</li>
+                    <li><strong>Right Panel</strong>: Interactive research chat</li>
+                </ul>
+
+                <h3>Keyboard Shortcuts</h3>
+                <table>
+                    <tr>
+                        <th>Key</th>
+                        <th>Action</th>
+                    </tr>
+                    <tr>
+                        <td><span class="keyboard-shortcut">Tab</span></td>
+                        <td>Switch between directory tree and chat panels</td>
+                    </tr>
+                    <tr>
+                        <td><span class="keyboard-shortcut">Enter</span></td>
+                        <td>Open file (tree) or submit query (chat)</td>
+                    </tr>
+                    <tr>
+                        <td><span class="keyboard-shortcut">Q</span></td>
+                        <td>Quit application</td>
+                    </tr>
+                    <tr>
+                        <td><span class="keyboard-shortcut">?</span></td>
+                        <td>Display help</td>
+                    </tr>
+                    <tr>
+                        <td><span class="keyboard-shortcut">Ctrl+L</span></td>
+                        <td>Clear chat history</td>
+                    </tr>
+                    <tr>
+                        <td><span class="keyboard-shortcut">Up/Down</span></td>
+                        <td>Navigate tree or chat history</td>
+                    </tr>
+                </table>
+
+                <h3>Case Selection</h3>
+                <p>When launching without a specific case path, the TUI displays a case selection screen listing all discovered cases. Cases are sorted by modification date (most recent first). Use arrow keys to navigate and Enter to select.</p>
+            </section>
+
+            <section id="chat-commands">
+                <h2>Chat Commands Reference</h2>
+
+                <p>The research chat accepts the following commands:</p>
+
+                <h3>Search and Query</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                        <th>Example</th>
+                    </tr>
+                    <tr>
+                        <td><code>search &lt;query&gt;</code></td>
+                        <td>Search all transcripts for keywords</td>
+                        <td><code>search knife</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>who said &lt;quote&gt;</code></td>
+                        <td>Find speaker of a specific quote</td>
+                        <td><code>who said drop the weapon</code></td>
+                    </tr>
+                </table>
+
+                <h3>Flagged Content</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>threats</code></td>
+                        <td>Display statements flagged as threats</td>
+                    </tr>
+                    <tr>
+                        <td><code>violence</code></td>
+                        <td>Display statements flagged as violence indicators</td>
+                    </tr>
+                </table>
+
+                <h3>Case Information</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>case</code></td>
+                        <td>Display case metadata and statistics</td>
+                    </tr>
+                    <tr>
+                        <td><code>witnesses</code></td>
+                        <td>List all identified witnesses with roles</td>
+                    </tr>
+                    <tr>
+                        <td><code>timeline</code></td>
+                        <td>Display chronological timeline of events</td>
+                    </tr>
+                    <tr>
+                        <td><code>propositions</code></td>
+                        <td>List extracted legal propositions</td>
+                    </tr>
+                </table>
+
+                <h3>System Commands</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>help</code></td>
+                        <td>Display available commands</td>
+                    </tr>
+                    <tr>
+                        <td><code>tools</code></td>
+                        <td>List all available research tools</td>
+                    </tr>
+                </table>
+
+                <h3>Example Research Session</h3>
+                <pre><code>&gt; case
+Case Information
+  Case ID: Case-9420250016631
+  Incident Date: 2025-10-27
+  Evidence Items: 100
+  Witnesses: 16
+  Propositions: 1
+
+&gt; search knife
+Search Results for 'knife' (37 found)
+  arrive_on_scene-6.mp4 @ 0:29
+    [SPEAKER_1]: "Hey, drop the knife, drop the knife..."
+  arrive_on_scene-6.mp4 @ 4:52
+    [SPEAKER_1]: "Oh, he was outside, with the knife in his hand..."
+  ...
+
+&gt; who said drop the knife
+Found:
+  Speaker: SPEAKER_1 (VICTIM)
+  File: arrive_on_scene-6.mp4 @ 0:29
+  Text: "Hey, drop the knife, drop the knife. Okay, come here..."</code></pre>
+            </section>
+
+            <section id="vision-analysis">
+                <h2>Vision Analysis</h2>
+
+                <p>Third Chair can analyze evidence photos using vision AI models to generate descriptions for legal discovery purposes.</p>
+
+                <h3>Requirements</h3>
+                <p>Vision analysis requires the <code>qwen2.5vl:3b</code> model (or another configured vision model) to be available in Ollama:</p>
+                <pre><code>ollama pull qwen2.5vl:3b</code></pre>
+
+                <h3>Analyzing Images</h3>
+                <pre><code># Analyze all images in the case
+third-chair vision ./Case-2025-001 --all
+
+# Analyze a specific image
+third-chair vision ./Case-2025-001 --image evidence_photo.jpg
+
+# Use a specialized prompt type
+third-chair vision ./Case-2025-001 --image injury.jpg --type injury</code></pre>
+
+                <h3>Prompt Types</h3>
+                <p>Different prompt types are optimized for specific types of evidence:</p>
+                <table>
+                    <tr>
+                        <th>Type</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>general</code></td>
+                        <td>General scene description (default)</td>
+                    </tr>
+                    <tr>
+                        <td><code>scene</code></td>
+                        <td>Crime scene or incident location analysis</td>
+                    </tr>
+                    <tr>
+                        <td><code>injury</code></td>
+                        <td>Injury documentation and description</td>
+                    </tr>
+                    <tr>
+                        <td><code>property</code></td>
+                        <td>Property damage assessment</td>
+                    </tr>
+                    <tr>
+                        <td><code>vehicle</code></td>
+                        <td>Vehicle identification and condition</td>
+                    </tr>
+                    <tr>
+                        <td><code>document</code></td>
+                        <td>Document or text extraction</td>
+                    </tr>
+                </table>
+
+                <div class="note">
+                    <strong>Note:</strong> Vision analysis results are saved to the case and included in generated reports.
+                </div>
+            </section>
+
+            <section id="viewing-guide">
+                <h2>Viewing Guide</h2>
+
+                <p>The viewing guide feature extracts flagged moments from transcripts with timestamps, enabling quick navigation to relevant portions of video evidence.</p>
+
+                <h3>Generating a Viewing Guide</h3>
+                <pre><code># Generate viewing guide with all flagged moments
+third-chair viewing-guide ./Case-2025-001
+
+# Filter by specific flag types
+third-chair viewing-guide ./Case-2025-001 --flags THREAT_KEYWORD,VIOLENCE_KEYWORD
+
+# Custom output path
+third-chair viewing-guide ./Case-2025-001 --output ./priority_review.txt</code></pre>
+
+                <h3>Flag Types</h3>
+                <p>The viewing guide can filter by the following flag types:</p>
+                <ul>
+                    <li><code>THREAT_KEYWORD</code> - Statements containing threat language</li>
+                    <li><code>VIOLENCE_KEYWORD</code> - Statements indicating violence</li>
+                    <li><code>LOW_CONFIDENCE</code> - Segments with low transcription confidence</li>
+                    <li><code>SPANISH_CONTENT</code> - Segments containing Spanish language</li>
+                </ul>
+
+                <h3>Output Format</h3>
+                <p>The viewing guide produces a text file with entries like:</p>
+                <pre><code>VIEWING GUIDE - Case-9420250016631
+Generated: 2025-01-13
+
+arrive_on_scene-6.mp4
+  00:29 [THREAT_KEYWORD] SPEAKER_1: "Hey, drop the knife, drop the knife..."
+  04:52 [VIOLENCE_KEYWORD] SPEAKER_1: "Oh, he was outside, with the knife..."
+
+arrive_on_scene-3.mp4
+  09:46 [THREAT_KEYWORD] SPEAKER_2: "I will kill you..."</code></pre>
+
+                <div class="note">
+                    <strong>Tip:</strong> Use the viewing guide to prioritize video review time by focusing on flagged moments first.
+                </div>
+            </section>
+
+            <section id="reports">
+                <h2>Report Generation</h2>
+
+                <h3>Available Formats</h3>
+                <ul>
+                    <li><strong>DOCX</strong>: Microsoft Word document, suitable for editing and annotation</li>
+                    <li><strong>PDF</strong>: Portable document with Bates numbering, suitable for filing</li>
+                    <li><strong>Text</strong>: Plain text format for maximum compatibility</li>
+                </ul>
+
+                <h3>Generating Reports</h3>
+                <pre><code># Generate all report formats
+third-chair report ./Case-2025-001 --format all
+
+# Generate specific format with options
+third-chair report ./Case-2025-001 \
+    --format pdf \
+    --bates-prefix DEF \
+    --bates-start 1 \
+    --prepared-by "Attorney Name"</code></pre>
+
+                <h3>Report Contents</h3>
+                <p>Generated reports include the following sections:</p>
+                <ol>
+                    <li><strong>Cover Page</strong>: Case identification and preparer information</li>
+                    <li><strong>Table of Contents</strong>: Navigation index</li>
+                    <li><strong>Executive Summary</strong>: AI-generated case overview</li>
+                    <li><strong>Case Overview</strong>: Dates, parties, and basic facts</li>
+                    <li><strong>Evidence Inventory</strong>: Complete list of evidence items</li>
+                    <li><strong>Witnesses</strong>: Identified witnesses with roles</li>
+                    <li><strong>Timeline</strong>: Chronological sequence of events</li>
+                    <li><strong>Key Statements</strong>: Flagged statements (threats, violence)</li>
+                    <li><strong>Items Requiring Review</strong>: Low-confidence segments</li>
+                </ol>
+
+                <h3>Bates Numbering</h3>
+                <p>PDF reports include Bates numbering for legal filing:</p>
+                <table>
+                    <tr>
+                        <th>Option</th>
+                        <th>Description</th>
+                        <th>Default</th>
+                    </tr>
+                    <tr>
+                        <td><code>--bates-prefix</code></td>
+                        <td>Prefix for Bates numbers</td>
+                        <td>DEF</td>
+                    </tr>
+                    <tr>
+                        <td><code>--bates-start</code></td>
+                        <td>Starting number</td>
+                        <td>1</td>
+                    </tr>
+                </table>
+                <p>Example: <code>DEF000001</code>, <code>DEF000002</code>, etc.</p>
+            </section>
+
+            <section id="skanda">
+                <h2>Skanda Framework</h2>
+
+                <p>The Skanda Framework provides evidence-backed legal proposition evaluation. This framework treats "fact" as an earned output label rather than a stored boolean value.</p>
+
+                <h3>Core Concepts</h3>
+
+                <h4>Proposition</h4>
+                <p>An assertion that may be advanced at trial. Each proposition includes:</p>
+                <ul>
+                    <li>Statement of the proposition</li>
+                    <li>Proponent party (Defense or State)</li>
+                    <li>Associated material issue</li>
+                    <li>Skanda (basket of supporting evidence)</li>
+                    <li>Evaluation snapshot</li>
+                </ul>
+
+                <h4>Proposit</h4>
+                <p>An atomic, testable mini-proposition. Each proposit must be backed by at least one evidence reference and includes:</p>
+                <ul>
+                    <li>Claim text</li>
+                    <li>Kind (direct observation, admission, inference)</li>
+                    <li>Polarity (supports or undermines)</li>
+                    <li>Evidence references</li>
+                    <li>Test results</li>
+                </ul>
+
+                <h4>Evaluation</h4>
+                <p>Propositions are evaluated deterministically based on their constituent proposits:</p>
+                <ul>
+                    <li><strong>Holds Under Scrutiny</strong>: holds, fails, or uncertain</li>
+                    <li><strong>Weight</strong>: 0.0 to 1.0 priority score</li>
+                    <li><strong>Probative Value</strong>: Relevance to material issue</li>
+                </ul>
+
+                <h3>Extracting Propositions</h3>
+                <pre><code>third-chair extract-propositions ./Case-2025-001 \
+    --issue self_defense \
+    --proponent Defense</code></pre>
+
+                <h3>Viewing Propositions</h3>
+                <p>In the chat interface:</p>
+                <pre><code>&gt; propositions
+Propositions (1)
+  prop_00001: Extracted propositions from case evidence...
+    Holds: holds | Weight: 0.70 | Proposits: 504</code></pre>
+
+                <h3>Evaluation Tests</h3>
+                <p>Each proposit undergoes the following deterministic tests:</p>
+                <table>
+                    <tr>
+                        <th>Test</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td>Personal Knowledge</td>
+                        <td>Speaker has direct perception of the claim</td>
+                    </tr>
+                    <tr>
+                        <td>Transcript Confidence</td>
+                        <td>Transcription accuracy meets threshold</td>
+                    </tr>
+                    <tr>
+                        <td>Source Reliability</td>
+                        <td>Evidence type reliability assessment</td>
+                    </tr>
+                    <tr>
+                        <td>Corroboration</td>
+                        <td>Multiple independent sources support claim</td>
+                    </tr>
+                    <tr>
+                        <td>Contradiction</td>
+                        <td>Check for opposing evidence</td>
+                    </tr>
+                    <tr>
+                        <td>Speaker Verified</td>
+                        <td>Speaker identity confirmed</td>
+                    </tr>
+                </table>
+            </section>
+
+            <section id="troubleshooting">
+                <h2>Troubleshooting</h2>
+
+                <h3>Common Issues</h3>
+
+                <h4>Ollama Connection Failed</h4>
+                <div class="warning">
+                    <strong>Error:</strong> "Connection refused" or "Ollama not available"
+                </div>
+                <p>Solution: Ensure Ollama is running:</p>
+                <pre><code>ollama serve</code></pre>
+                <p>Verify the models are installed:</p>
+                <pre><code>ollama list</code></pre>
+
+                <h4>Slow Response Times</h4>
+                <div class="warning">
+                    <strong>Symptom:</strong> Ollama responses taking 30+ seconds
+                </div>
+                <p>This typically indicates multiple models are loaded. Restart Ollama:</p>
+                <pre><code>sudo snap restart ollama  # If installed via snap
+# or
+killall ollama && ollama serve</code></pre>
+
+                <h4>Memory Issues</h4>
+                <div class="warning">
+                    <strong>Error:</strong> Out of memory during transcription
+                </div>
+                <p>Solutions:</p>
+                <ul>
+                    <li>Use a smaller Whisper model: <code>WHISPER_MODEL=small</code></li>
+                    <li>Close other applications to free memory</li>
+                    <li>Process shorter media files individually</li>
+                </ul>
+
+                <h4>FFmpeg Not Found</h4>
+                <div class="warning">
+                    <strong>Error:</strong> "FFmpeg not found" during transcription
+                </div>
+                <p>Install FFmpeg:</p>
+                <pre><code># Ubuntu/Debian
+sudo apt-get install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Windows
+# Download from https://ffmpeg.org/download.html</code></pre>
+
+                <h4>OCR Not Working</h4>
+                <div class="warning">
+                    <strong>Symptom:</strong> Scanned documents return empty text
+                </div>
+                <p>Install Tesseract OCR:</p>
+                <pre><code># Ubuntu/Debian
+sudo apt-get install tesseract-ocr
+
+# macOS
+brew install tesseract</code></pre>
+
+                <h3>Getting Help</h3>
+                <p>For additional support:</p>
+                <ul>
+                    <li>Review the command help: <code>third-chair --help</code></li>
+                    <li>Check command-specific help: <code>third-chair process --help</code></li>
+                    <li>Open an issue: <a href="https://github.com/davidkarpay/Third-Chair/issues">GitHub Issues</a></li>
+                </ul>
+            </section>
+
+            <footer style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666;">
+                <p>Third Chair User Guide</p>
+                <p>Version 0.2.0</p>
+                <p>Last updated: January 2025</p>
+            </footer>
+        </main>
+    </div>
+</body>
+</html>
