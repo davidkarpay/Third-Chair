@@ -1,0 +1,25 @@
+{
+  "case_id": "TEST-001",
+  "court_case": "50-2025-CF-000001",
+  "created_at": "2025-01-15T10:00:00",
+  "output_dir": "/tmp/test_case",
+  "evidence_items": [
+    {
+      "id": "EVD-001",
+      "filename": "bodycam_001.mp4",
+      "file_path": "/tmp/test_case/extracted/bodycam_001.mp4",
+      "file_type": "video",
+      "content_type": "bwc_footage",
+      "size_bytes": 1024000,
+      "processing_status": "pending",
+      "created_at": "2025-01-15T10:00:00"
+    }
+  ],
+  "witnesses": {
+    "witnesses": []
+  },
+  "timeline": [],
+  "propositions": [],
+  "material_issues": [],
+  "metadata": {}
+}

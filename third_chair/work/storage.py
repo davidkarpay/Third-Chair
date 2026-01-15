@@ -167,17 +167,17 @@ class WorkStorage:
             if yaml_file.name == INDEX_FILE:
                 continue
 
-            with open(yaml_file) as f:
-                data = yaml.safe_load(f) or {}
+            try:
+                with open(yaml_file) as f:
+                    data = yaml.safe_load(f) or {}
 
-            if "id" in data and "type" in data:
-                try:
+                if "id" in data and "type" in data:
                     item = WorkItem.from_dict(data)
                     items.append(item)
                     self._items[item.id] = item
-                except (ValueError, KeyError):
-                    # Skip malformed files
-                    pass
+            except (yaml.YAMLError, ValueError, KeyError):
+                # Skip malformed or invalid files
+                pass
 
         return items
 
