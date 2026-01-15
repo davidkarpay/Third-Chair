@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
-
-load_dotenv()
+# NOTE: load_dotenv() is called in CLI main.py for faster module imports
+# from dotenv import load_dotenv
+# load_dotenv()
 
 
 @dataclass

@@ -4,8 +4,12 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
+
+# Load environment variables early for all commands
+load_dotenv()
 
 app = typer.Typer(
     name="third-chair",
@@ -1552,6 +1556,543 @@ def _process_chat_command(registry, cmd: str, console) -> None:
     else:
         console.print(f"[yellow]Unknown command: {cmd}[/yellow]")
         console.print("[dim]Type 'help' for available commands[/dim]")
+
+
+# =============================================================================
+# Vault Commands (Encryption)
+# =============================================================================
+
+
+@app.command("vault-init")
+def vault_init(
+    case_dir: Path = typer.Argument(..., help="Path to case directory to encrypt"),
+    timeout: int = typer.Option(
+        30,
+        "--timeout", "-t",
+        help="Session timeout in minutes (0 = no timeout)",
+    ),
+):
+    """
+    Encrypt an existing case directory.
+
+    Creates a vault with AES-256 encryption for all case files.
+    After encryption, case data can only be accessed through Third Chair
+    interfaces (TUI, CLI) with the correct password.
+
+    Files encrypted:
+    - case.json (case metadata)
+    - extracted/* (evidence files)
+
+    The original unencrypted files are removed after successful encryption.
+
+    Example:
+        third-chair vault-init ./my_case
+    """
+    from getpass import getpass
+    from ..vault import (
+        encrypt_existing_case,
+        is_vault_encrypted,
+        VaultAlreadyExistsError,
+    )
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if is_vault_encrypted(case_dir):
+        console.print(f"[yellow]Case is already encrypted.[/yellow]")
+        console.print("Use 'vault-status' to check encryption status.")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Third Chair Vault - Encrypt Case[/bold]\n")
+    console.print(f"Case directory: {case_dir}")
+    console.print()
+    console.print("[yellow]Warning: This will encrypt all case files.[/yellow]")
+    console.print("[yellow]Original files will be removed after encryption.[/yellow]")
+    console.print()
+
+    # Get password
+    password = getpass("Enter master password: ")
+    if len(password) < 8:
+        console.print("[red]Error: Password must be at least 8 characters[/red]")
+        raise typer.Exit(1)
+
+    confirm = getpass("Confirm password: ")
+    if password != confirm:
+        console.print("[red]Error: Passwords do not match[/red]")
+        raise typer.Exit(1)
+
+    console.print()
+    console.print("[bold]Encrypting case...[/bold]")
+
+    try:
+        stats = encrypt_existing_case(
+            case_dir=case_dir,
+            password=password,
+            show_progress=True,
+        )
+
+        console.print()
+        console.print(f"[bold green]Case encrypted successfully![/bold green]")
+        console.print(f"  Files encrypted: {stats['files_encrypted']}")
+        console.print(f"  Bytes encrypted: {stats['bytes_encrypted']:,}")
+
+        if stats['errors']:
+            console.print(f"[yellow]  Errors: {len(stats['errors'])}[/yellow]")
+
+        console.print()
+        console.print("[dim]Case is now protected. Use 'vault-unlock' to access.[/dim]")
+
+    except VaultAlreadyExistsError:
+        console.print("[red]Error: Case is already encrypted[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("vault-unlock")
+def vault_unlock(
+    case_dir: Path = typer.Argument(..., help="Path to encrypted case directory"),
+    timeout: int = typer.Option(
+        30,
+        "--timeout", "-t",
+        help="Session timeout in minutes (0 = no timeout)",
+    ),
+):
+    """
+    Unlock an encrypted case for this session.
+
+    After unlocking, the case can be accessed through Third Chair
+    commands (tui, chat, status, etc.) without re-entering the password.
+
+    Session automatically expires after the timeout period of inactivity.
+
+    Example:
+        third-chair vault-unlock ./my_case
+        third-chair vault-unlock ./my_case --timeout 60
+    """
+    from getpass import getpass
+    from ..vault import (
+        VaultManager,
+        is_vault_encrypted,
+        is_vault_unlocked,
+        InvalidPasswordError,
+        VaultNotFoundError,
+    )
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if not is_vault_encrypted(case_dir):
+        console.print("[yellow]Case is not encrypted.[/yellow]")
+        raise typer.Exit(0)
+
+    if is_vault_unlocked(case_dir):
+        console.print("[green]Vault is already unlocked.[/green]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold]Third Chair Vault - Unlock[/bold]\n")
+    console.print(f"Case: {case_dir.name}")
+
+    password = getpass("Enter password: ")
+
+    try:
+        vm = VaultManager(case_dir)
+        session = vm.unlock(password, timeout_minutes=timeout)
+
+        console.print()
+        console.print(f"[bold green]Vault unlocked![/bold green]")
+
+        if timeout > 0:
+            console.print(f"[dim]Session expires in {timeout} minutes of inactivity.[/dim]")
+        else:
+            console.print("[dim]Session has no timeout.[/dim]")
+
+    except InvalidPasswordError:
+        console.print("[red]Error: Invalid password[/red]")
+        raise typer.Exit(1)
+    except VaultNotFoundError:
+        console.print("[red]Error: Not an encrypted vault[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("vault-lock")
+def vault_lock(
+    case_dir: Optional[Path] = typer.Argument(
+        None,
+        help="Case directory to lock (omit to lock all)",
+    ),
+    all_vaults: bool = typer.Option(
+        False,
+        "--all", "-a",
+        help="Lock all unlocked vaults",
+    ),
+):
+    """
+    Lock an encrypted case (clear session).
+
+    Clears the encryption keys from memory, requiring the password
+    to be re-entered for further access.
+
+    Use --all to lock all currently unlocked vaults.
+
+    Example:
+        third-chair vault-lock ./my_case
+        third-chair vault-lock --all
+    """
+    from ..vault import lock_vault, lock_all_vaults, is_vault_unlocked
+
+    if all_vaults or case_dir is None:
+        count = lock_all_vaults()
+        if count > 0:
+            console.print(f"[green]Locked {count} vault(s)[/green]")
+        else:
+            console.print("[dim]No vaults were unlocked[/dim]")
+        return
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if not is_vault_unlocked(case_dir):
+        console.print("[dim]Vault is already locked[/dim]")
+        return
+
+    if lock_vault(case_dir):
+        console.print(f"[green]Vault locked: {case_dir.name}[/green]")
+    else:
+        console.print("[dim]Vault was not unlocked[/dim]")
+
+
+@app.command("vault-status")
+def vault_status(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+):
+    """
+    Show encryption status of a case.
+
+    Displays whether the case is encrypted, locked/unlocked,
+    and session timeout information.
+
+    Example:
+        third-chair vault-status ./my_case
+    """
+    from ..vault import (
+        VaultManager,
+        is_vault_encrypted,
+        get_vault_session,
+    )
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    case_file = case_dir / "case.json"
+    enc_case_file = case_dir / "case.json.enc"
+
+    console.print(f"\n[bold]Vault Status: {case_dir.name}[/bold]\n")
+
+    if not is_vault_encrypted(case_dir):
+        console.print("  Encrypted: [yellow]No[/yellow]")
+        console.print("  Status: [dim]Unprotected[/dim]")
+        console.print()
+        console.print("[dim]Use 'vault-init' to encrypt this case.[/dim]")
+        return
+
+    # Load metadata
+    vm = VaultManager(case_dir)
+    metadata = vm.metadata
+
+    console.print("  Encrypted: [green]Yes[/green]")
+    console.print(f"  Algorithm: {metadata.algorithm}")
+    console.print(f"  Key derivation: {metadata.key_derivation}")
+    console.print(f"  Iterations: {metadata.iterations:,}")
+    console.print(f"  Created: {metadata.created_at}")
+
+    # Check session
+    session = get_vault_session(case_dir)
+    if session:
+        remaining = session.time_remaining()
+        if remaining:
+            minutes = int(remaining.total_seconds() / 60)
+            seconds = int(remaining.total_seconds() % 60)
+            console.print(f"\n  Session: [green]Unlocked[/green]")
+            console.print(f"  Time remaining: {minutes}m {seconds}s")
+        else:
+            console.print(f"\n  Session: [green]Unlocked[/green] (no timeout)")
+    else:
+        console.print(f"\n  Session: [red]Locked[/red]")
+        console.print("  [dim]Use 'vault-unlock' to access case data.[/dim]")
+
+
+@app.command("vault-export")
+def vault_export(
+    case_dir: Path = typer.Argument(..., help="Path to encrypted case directory"),
+    output: Path = typer.Option(
+        ...,
+        "--output", "-o",
+        help="Output directory for decrypted copy",
+    ),
+):
+    """
+    Export a decrypted copy of an encrypted case.
+
+    Creates a new directory with fully decrypted files.
+    The original encrypted vault remains unchanged.
+
+    Useful for:
+    - Creating backups
+    - Sharing with users who don't have Third Chair
+    - Court filing requirements
+
+    Example:
+        third-chair vault-export ./my_case -o ./my_case_decrypted
+    """
+    from getpass import getpass
+    from ..vault import (
+        decrypt_case_for_export,
+        is_vault_encrypted,
+        is_vault_unlocked,
+        VaultManager,
+        InvalidPasswordError,
+        VaultNotFoundError,
+    )
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if not is_vault_encrypted(case_dir):
+        console.print("[yellow]Case is not encrypted. Use 'cp -r' to copy.[/yellow]")
+        raise typer.Exit(1)
+
+    if output.exists():
+        console.print(f"[red]Error: Output directory already exists: {output}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Third Chair Vault - Export Decrypted[/bold]\n")
+    console.print(f"Source: {case_dir}")
+    console.print(f"Output: {output}")
+    console.print()
+
+    # Get password if not unlocked
+    password = None
+    if not is_vault_unlocked(case_dir):
+        password = getpass("Enter password: ")
+
+        # Verify password
+        vm = VaultManager(case_dir)
+        if not vm.verify_password(password):
+            console.print("[red]Error: Invalid password[/red]")
+            raise typer.Exit(1)
+    else:
+        # Get password from session - need to re-enter for export
+        console.print("[dim]Vault is unlocked, but password required for export.[/dim]")
+        password = getpass("Enter password: ")
+
+        vm = VaultManager(case_dir)
+        if not vm.verify_password(password):
+            console.print("[red]Error: Invalid password[/red]")
+            raise typer.Exit(1)
+
+    console.print()
+    console.print("[bold]Exporting decrypted files...[/bold]")
+
+    try:
+        stats = decrypt_case_for_export(
+            case_dir=case_dir,
+            password=password,
+            output_dir=output,
+            show_progress=True,
+        )
+
+        console.print()
+        console.print(f"[bold green]Export complete![/bold green]")
+        console.print(f"  Files decrypted: {stats['files_decrypted']}")
+        console.print(f"  Files copied: {stats['files_copied']}")
+        console.print(f"  Output: {output}")
+
+        if stats['errors']:
+            console.print(f"[yellow]  Errors: {len(stats['errors'])}[/yellow]")
+
+    except InvalidPasswordError:
+        console.print("[red]Error: Invalid password[/red]")
+        raise typer.Exit(1)
+    except VaultNotFoundError:
+        console.print("[red]Error: Not an encrypted vault[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("vault-verify")
+def vault_verify(
+    case_dir: Path = typer.Argument(..., help="Path to encrypted case directory"),
+):
+    """
+    Verify integrity of an encrypted vault.
+
+    Tests that all encrypted files can be successfully decrypted.
+    Does not write any files - only verifies decryption works.
+
+    Example:
+        third-chair vault-verify ./my_case
+    """
+    from getpass import getpass
+    from ..vault import (
+        verify_vault_integrity,
+        is_vault_encrypted,
+        is_vault_unlocked,
+        VaultManager,
+        InvalidPasswordError,
+    )
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if not is_vault_encrypted(case_dir):
+        console.print("[yellow]Case is not encrypted.[/yellow]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Third Chair Vault - Verify Integrity[/bold]\n")
+    console.print(f"Case: {case_dir.name}")
+    console.print()
+
+    # Get password if not unlocked
+    password = None
+    if not is_vault_unlocked(case_dir):
+        password = getpass("Enter password: ")
+    else:
+        # Use existing session - still need password for verification
+        password = getpass("Enter password to verify: ")
+
+    try:
+        vm = VaultManager(case_dir)
+        if not vm.verify_password(password):
+            console.print("[red]Error: Invalid password[/red]")
+            raise typer.Exit(1)
+
+        console.print("[bold]Verifying encrypted files...[/bold]")
+
+        stats = verify_vault_integrity(
+            case_dir=case_dir,
+            password=password,
+            show_progress=True,
+        )
+
+        console.print()
+        if stats['files_failed'] == 0:
+            console.print(f"[bold green]Vault integrity verified![/bold green]")
+            console.print(f"  Files verified: {stats['files_verified']}")
+        else:
+            console.print(f"[bold red]Integrity check failed![/bold red]")
+            console.print(f"  Files verified: {stats['files_verified']}")
+            console.print(f"  Files failed: {stats['files_failed']}")
+            for error in stats['errors'][:5]:
+                console.print(f"    [red]- {error}[/red]")
+            raise typer.Exit(1)
+
+    except InvalidPasswordError:
+        console.print("[red]Error: Invalid password[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("vault-rotate")
+def vault_rotate(
+    case_dir: Path = typer.Argument(..., help="Path to encrypted case directory"),
+):
+    """
+    Change the vault password.
+
+    Re-encrypts all files with a new key derived from the new password.
+    Requires current password for verification.
+
+    Example:
+        third-chair vault-rotate ./my_case
+    """
+    from getpass import getpass
+    from ..vault import (
+        rotate_password,
+        is_vault_encrypted,
+        VaultManager,
+        InvalidPasswordError,
+    )
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    if not is_vault_encrypted(case_dir):
+        console.print("[yellow]Case is not encrypted.[/yellow]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Third Chair Vault - Change Password[/bold]\n")
+    console.print(f"Case: {case_dir.name}")
+    console.print()
+    console.print("[yellow]Warning: This will re-encrypt all files with a new key.[/yellow]")
+    console.print()
+
+    # Get current password
+    old_password = getpass("Enter current password: ")
+
+    vm = VaultManager(case_dir)
+    if not vm.verify_password(old_password):
+        console.print("[red]Error: Invalid current password[/red]")
+        raise typer.Exit(1)
+
+    # Get new password
+    console.print()
+    new_password = getpass("Enter new password: ")
+    if len(new_password) < 8:
+        console.print("[red]Error: New password must be at least 8 characters[/red]")
+        raise typer.Exit(1)
+
+    confirm = getpass("Confirm new password: ")
+    if new_password != confirm:
+        console.print("[red]Error: Passwords do not match[/red]")
+        raise typer.Exit(1)
+
+    if new_password == old_password:
+        console.print("[yellow]New password is the same as old password.[/yellow]")
+        raise typer.Exit(0)
+
+    console.print()
+    console.print("[bold]Re-encrypting files with new key...[/bold]")
+
+    try:
+        stats = rotate_password(
+            case_dir=case_dir,
+            old_password=old_password,
+            new_password=new_password,
+            show_progress=True,
+        )
+
+        console.print()
+        console.print(f"[bold green]Password changed successfully![/bold green]")
+        console.print(f"  Files re-encrypted: {stats['files_rotated']}")
+
+        if stats['errors']:
+            console.print(f"[yellow]  Errors: {len(stats['errors'])}[/yellow]")
+            for error in stats['errors'][:3]:
+                console.print(f"    [red]- {error}[/red]")
+
+    except InvalidPasswordError:
+        console.print("[red]Error: Invalid password[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
 
 # =============================================================================

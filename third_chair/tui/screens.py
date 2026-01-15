@@ -7,9 +7,9 @@ from typing import Optional
 
 from rich.table import Table
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical
-from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.containers import Container, Vertical, VerticalScroll
+from textual.screen import ModalScreen, Screen
+from textual.widgets import DataTable, Footer, Header, Markdown, Static
 
 
 def discover_cases(search_paths: list[Path]) -> list[dict]:
@@ -231,3 +231,129 @@ class CaseSelectionScreen(Screen):
     def action_quit(self) -> None:
         """Quit without selecting a case."""
         self.dismiss(None)
+
+
+class FileViewerScreen(ModalScreen):
+    """Modal screen for viewing file contents."""
+
+    BINDINGS = [
+        ("escape", "dismiss", "Close"),
+        ("q", "dismiss", "Close"),
+        ("up", "scroll_up", "Scroll Up"),
+        ("down", "scroll_down", "Scroll Down"),
+        ("pageup", "page_up", "Page Up"),
+        ("pagedown", "page_down", "Page Down"),
+        ("home", "scroll_home", "Top"),
+        ("end", "scroll_end", "Bottom"),
+    ]
+
+    DEFAULT_CSS = """
+    FileViewerScreen {
+        align: center middle;
+    }
+
+    FileViewerScreen > Container {
+        width: 80%;
+        height: 80%;
+        border: solid $primary;
+        background: $surface;
+    }
+
+    FileViewerScreen .file-title {
+        dock: top;
+        text-align: center;
+        text-style: bold;
+        padding: 1;
+        background: $primary;
+        color: $text;
+    }
+
+    FileViewerScreen .file-content {
+        height: 1fr;
+        padding: 1;
+    }
+
+    FileViewerScreen .close-hint {
+        dock: bottom;
+        text-align: center;
+        padding: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        file_path: Path,
+        *,
+        name: Optional[str] = None,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+    ) -> None:
+        """Initialize the file viewer screen.
+
+        Args:
+            file_path: Path to the file to display.
+            name: Screen name.
+            id: Screen ID.
+            classes: CSS classes.
+        """
+        super().__init__(name=name, id=id, classes=classes)
+        self.file_path = file_path
+
+    def compose(self) -> ComposeResult:
+        """Compose the screen."""
+        with Container():
+            yield Static(f"[bold]{self.file_path.name}[/bold]", classes="file-title")
+            yield VerticalScroll(
+                self._create_content_widget(),
+                classes="file-content",
+                id="file-scroll",
+            )
+            yield Static(
+                "[dim]Press ESC/Q to close | ↑↓ PgUp/PgDn to scroll[/dim]",
+                classes="close-hint",
+            )
+
+    def _create_content_widget(self) -> Static | Markdown:
+        """Create the appropriate content widget based on file type."""
+        try:
+            content = self.file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            return Static(f"[red]Error reading file: {e}[/red]")
+
+        if self.file_path.suffix.lower() == ".md":
+            return Markdown(content)
+        else:
+            return Static(content)
+
+    def on_mount(self) -> None:
+        """Focus the scroll container on mount for keyboard navigation."""
+        self.query_one("#file-scroll").focus()
+
+    def action_dismiss(self) -> None:
+        """Dismiss the modal."""
+        self.dismiss()
+
+    def action_scroll_up(self) -> None:
+        """Scroll up one line."""
+        self.query_one("#file-scroll").scroll_up()
+
+    def action_scroll_down(self) -> None:
+        """Scroll down one line."""
+        self.query_one("#file-scroll").scroll_down()
+
+    def action_page_up(self) -> None:
+        """Scroll up one page."""
+        self.query_one("#file-scroll").scroll_page_up()
+
+    def action_page_down(self) -> None:
+        """Scroll down one page."""
+        self.query_one("#file-scroll").scroll_page_down()
+
+    def action_scroll_home(self) -> None:
+        """Scroll to top."""
+        self.query_one("#file-scroll").scroll_home()
+
+    def action_scroll_end(self) -> None:
+        """Scroll to bottom."""
+        self.query_one("#file-scroll").scroll_end()

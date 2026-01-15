@@ -12,12 +12,10 @@ from textual.widgets import Footer, Header, Static
 
 from .screens import CaseSelectionScreen, FileViewerScreen, discover_cases
 from .widgets import CaseDirectoryTree, CaseInfoPanel, ChatPanel
-from ..chat.intent_extractor import (
-    extract_intent,
-    format_confirmation_prompt,
-    ExtractedIntent,
-    IntentResult,
-)
+from .vault_screen import PasswordDialog
+
+# NOTE: intent_extractor imports are deferred to function-level for faster startup
+# from ..chat.intent_extractor import extract_intent, format_confirmation_prompt, ExtractedIntent, IntentResult
 
 
 class ThirdChairApp(App):
@@ -155,25 +153,61 @@ class ThirdChairApp(App):
         except Exception:
             pass
 
-    async def _load_case(self, case_path: Path) -> None:
+    async def _load_case(self, case_path: Path, password_error: str = None) -> None:
         """Load a case and update the UI.
+
+        Handles encrypted vaults by showing a password dialog.
 
         Args:
             case_path: Path to case directory.
+            password_error: Error message from previous password attempt.
         """
         from ..models import Case
         from ..chat import ToolRegistry
 
         case_file = case_path / "case.json"
-        if not case_file.exists():
+        encrypted_case_file = case_path / "case.json.enc"
+
+        if not case_file.exists() and not encrypted_case_file.exists():
             self.notify(f"Case not found: {case_path}", severity="error")
             self.exit()
             return
 
-        # Load case
-        self.case = Case.load(case_file)
+        # Check if vault is encrypted and needs unlocking
+        try:
+            from ..vault import is_vault_encrypted, is_vault_unlocked, VaultManager, InvalidPasswordError
+
+            if is_vault_encrypted(case_path) and not is_vault_unlocked(case_path):
+                # Show password dialog
+                self.push_screen(
+                    PasswordDialog(
+                        case_name=case_path.name,
+                        error_message=password_error,
+                    ),
+                    callback=lambda password: self._on_vault_password(case_path, password),
+                )
+                return
+        except ImportError:
+            pass  # Vault module not available
+
+        # Load case (vault is either unlocked or unencrypted)
+        try:
+            self.case = Case.load(case_file)
+        except Exception as e:
+            self.notify(f"Error loading case: {e}", severity="error")
+            self.exit()
+            return
+
         self.case_path = case_path
         self.registry = ToolRegistry(self.case)
+
+        # Show vault status in title if encrypted
+        try:
+            from ..vault import is_vault_encrypted
+            if is_vault_encrypted(case_path):
+                self.sub_title = f"Case: {self.case.case_id} [Encrypted]"
+        except ImportError:
+            pass
 
         # Update case info
         info_widget = self.query_one("#case-info", Static)
@@ -192,6 +226,41 @@ class ThirdChairApp(App):
 
         # Update title
         self.sub_title = f"Case: {self.case.case_id}"
+
+    def _on_vault_password(self, case_path: Path, password: str | None) -> None:
+        """Handle vault password dialog result.
+
+        Args:
+            case_path: Path to the case directory.
+            password: Password entered, or None if cancelled.
+        """
+        if password is None:
+            # User cancelled - exit or show case selection
+            self.notify("Vault unlock cancelled", severity="warning")
+            self.exit()
+            return
+
+        # Try to unlock the vault
+        try:
+            from ..vault import VaultManager, InvalidPasswordError
+
+            vm = VaultManager(case_path)
+            vm.unlock(password)
+
+            # Success - continue loading the case
+            self.call_after_refresh(self._load_case_and_focus, case_path)
+
+        except InvalidPasswordError:
+            # Wrong password - show dialog again with error
+            self.call_after_refresh(
+                self._load_case,
+                case_path,
+                "Invalid password. Please try again.",
+            )
+
+        except Exception as e:
+            self.notify(f"Vault error: {e}", severity="error")
+            self.exit()
 
     def on_chat_panel_chat_submitted(self, event: ChatPanel.ChatSubmitted) -> None:
         """Handle chat submission."""
@@ -264,6 +333,15 @@ class ThirdChairApp(App):
             quote = cmd[9:].strip()
             return self._who_said(quote)
 
+        # Open/view file command (instant, no LLM)
+        if cmd_lower.startswith("open "):
+            filename = cmd[5:].strip()
+            return self._open_file(filename)
+
+        if cmd_lower.startswith("view "):
+            filename = cmd[5:].strip()
+            return self._open_file(filename)
+
         # NLP fallback: Try to extract intent from natural language
         return self._try_nlp_intent(cmd)
 
@@ -280,6 +358,7 @@ class ThirdChairApp(App):
   [cyan]propositions[/cyan]      List propositions
   [cyan]tools[/cyan]             List all available tools
   [cyan]who said <quote>[/cyan]  Find who said a quote
+  [cyan]open <filename>[/cyan]   Open a .md or .txt file
   [cyan]help[/cyan]              Show this help
 
 [bold]Natural Language:[/bold]
@@ -559,6 +638,48 @@ class ThirdChairApp(App):
 
         return f"[yellow]No match found for '{quote}'[/yellow]"
 
+    def _open_file(self, filename: str) -> str:
+        """Open a file from the case directory.
+
+        Args:
+            filename: Full or partial filename to open.
+
+        Returns:
+            Response text (empty if file opens in viewer).
+        """
+        if not self.case:
+            return "[red]No case loaded.[/red]"
+
+        # Search for file in case directory
+        case_dir = Path(self.case.case_dir)
+        matches = list(case_dir.rglob(f"*{filename}*"))
+
+        if not matches:
+            return f"[yellow]File not found: {filename}[/yellow]"
+
+        # Filter to viewable files
+        viewable = [m for m in matches if m.suffix.lower() in (".md", ".txt")]
+
+        if len(viewable) == 1:
+            self.push_screen(FileViewerScreen(viewable[0]))
+            return ""  # Screen handles display
+
+        if len(viewable) > 1:
+            # Multiple matches - list them
+            lines = [f"[yellow]Multiple matches for '{filename}':[/yellow]"]
+            for m in viewable[:10]:
+                lines.append(f"  {m.name}")
+            if len(viewable) > 10:
+                lines.append(f"  ... and {len(viewable) - 10} more")
+            lines.append("\n[dim]Be more specific with the filename.[/dim]")
+            return "\n".join(lines)
+
+        # No viewable files found, but other matches exist
+        if matches:
+            return f"[yellow]Cannot view {matches[0].suffix} files in TUI. Only .md and .txt supported.[/yellow]"
+
+        return f"[yellow]File not found: {filename}[/yellow]"
+
     def _try_nlp_intent(self, cmd: str) -> str:
         """Try to extract intent using NLP.
 
@@ -590,6 +711,9 @@ class ThirdChairApp(App):
         Args:
             cmd: The user's natural language query.
         """
+        # Lazy import for faster startup
+        from ..chat.intent_extractor import extract_intent
+
         # Get tool schemas from registry
         tool_schemas = self.registry.get_json_schemas()
 
@@ -602,18 +726,21 @@ class ThirdChairApp(App):
             )
 
         # Extract intent (blocking call, but in background thread)
-        result: IntentResult = extract_intent(cmd, tool_schemas, case_context)
+        result = extract_intent(cmd, tool_schemas, case_context)
 
         # Process result on main thread via call_from_thread
         self.call_from_thread(self._handle_intent_result, result, cmd)
 
-    def _handle_intent_result(self, result: IntentResult, original_cmd: str) -> None:
+    def _handle_intent_result(self, result, original_cmd: str) -> None:
         """Handle intent extraction result on main thread.
 
         Args:
-            result: The intent extraction result.
+            result: The intent extraction result (IntentResult).
             original_cmd: The original command for error messages.
         """
+        # Lazy import for faster startup
+        from ..chat.intent_extractor import format_confirmation_prompt
+
         chat_panel = self.query_one("#chat-panel", ChatPanel)
         chat_panel.hide_loading()
 
@@ -646,11 +773,11 @@ class ThirdChairApp(App):
         chat_panel.set_pending_intent(intent)
         chat_panel.add_response(format_confirmation_prompt(intent))
 
-    def _execute_intent(self, intent: ExtractedIntent) -> str:
+    def _execute_intent(self, intent) -> str:
         """Execute an extracted intent via the tool registry.
 
         Args:
-            intent: The intent to execute.
+            intent: The intent to execute (ExtractedIntent).
 
         Returns:
             Result of the tool execution.
