@@ -219,7 +219,7 @@ def extract_intent(
         )
 
     # Extract fields
-    tool_name = parsed.get("tool", "none")
+    tool_name = parsed.get("tool", "none") or "none"  # Handle null JSON value
     params = parsed.get("params", {})
     confidence = float(parsed.get("confidence", 0.0))
     interpretation = parsed.get("interpretation", "")
@@ -231,7 +231,7 @@ def extract_intent(
         for s in tool_schemas
     } - {None}  # Remove None in case of malformed schemas
 
-    if tool_name != "none" and tool_name not in valid_tools:
+    if tool_name and tool_name != "none" and tool_name not in valid_tools:
         # Try to find closest match
         for valid_name in valid_tools:
             if valid_name and (tool_name.lower() in valid_name.lower() or valid_name.lower() in tool_name.lower()):

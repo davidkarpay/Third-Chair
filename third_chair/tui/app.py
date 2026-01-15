@@ -426,7 +426,7 @@ class ThirdChairApp(App):
         tools = self.registry.list_tools()
         lines = [f"[bold]Available Tools ({len(tools)})[/bold]"]
         for tool in tools[:20]:
-            lines.append(f"  {tool['name']}: {tool['description'][:50]}...")
+            lines.append(f"  {tool.name}: {tool.description[:50]}...")
 
         if len(tools) > 20:
             lines.append(f"  ... and {len(tools) - 20} more")
