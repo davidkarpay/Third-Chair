@@ -13,6 +13,7 @@ from textual.widgets import Footer, Header, Static
 from .screens import CaseSelectionScreen, FileViewerScreen, discover_cases
 from .widgets import CaseDirectoryTree, CaseInfoPanel, ChatPanel
 from .vault_screen import PasswordDialog
+from .staging_screen import StagingScreen
 
 # NOTE: intent_extractor imports are deferred to function-level for faster startup
 # from ..chat.intent_extractor import extract_intent, format_confirmation_prompt, ExtractedIntent, IntentResult
@@ -79,6 +80,7 @@ class ThirdChairApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("tab", "switch_panel", "Switch Panel", show=True),
+        Binding("s", "show_staging", "Staging", show=True),
         Binding("?", "show_help", "Help", show=True),
         Binding("ctrl+l", "clear_chat", "Clear Chat", show=False),
     ]
@@ -87,12 +89,14 @@ class ThirdChairApp(App):
         self,
         case_path: Optional[Path] = None,
         search_paths: Optional[list[Path]] = None,
+        staging_dir: Optional[Path] = None,
     ) -> None:
         """Initialize the application.
 
         Args:
             case_path: Path to case directory (skips selection if provided).
             search_paths: Paths to search for cases.
+            staging_dir: Directory for staging ZIP imports.
         """
         super().__init__()
         self.case_path = case_path
@@ -100,9 +104,13 @@ class ThirdChairApp(App):
             Path.cwd(),
             Path("/mnt/d/Third_Chair"),
         ]
+        self.staging_dir = staging_dir or Path.cwd() / "staging"
+        self.cases_dir = Path.cwd() / "cases"
         self.case = None
         self.registry = None
         self._active_panel = "chat"  # "tree" or "chat"
+        self._staging_manager = None
+        self._staging_watcher = None
 
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
@@ -360,6 +368,12 @@ class ThirdChairApp(App):
   [cyan]who said <quote>[/cyan]  Find who said a quote
   [cyan]open <filename>[/cyan]   Open a .md or .txt file
   [cyan]help[/cyan]              Show this help
+
+[bold]Keyboard Shortcuts:[/bold]
+  [cyan]s[/cyan]                 Open staging area (import ZIPs)
+  [cyan]Tab[/cyan]               Switch panel focus
+  [cyan]?[/cyan]                 Show this help
+  [cyan]q[/cyan]                 Quit
 
 [bold]Natural Language:[/bold]
   You can also ask questions naturally, e.g.:
@@ -910,7 +924,65 @@ class ThirdChairApp(App):
 
     def action_quit(self) -> None:
         """Quit the application."""
+        # Stop staging watcher if running
+        if self._staging_watcher:
+            self._staging_watcher.stop()
         self.exit()
+
+    def action_show_staging(self) -> None:
+        """Show the staging screen for ZIP imports."""
+        self.push_screen(StagingScreen(self._get_staging_manager()))
+
+    def _get_staging_manager(self):
+        """Get or create the staging manager (lazy-loaded)."""
+        if self._staging_manager is None:
+            from ..staging import StagingManager
+            self._staging_manager = StagingManager(
+                staging_dir=self.staging_dir,
+                cases_dir=self.cases_dir,
+            )
+        return self._staging_manager
+
+    def _start_staging_watcher(self) -> None:
+        """Start the staging watcher for auto-processing."""
+        if self._staging_watcher is not None:
+            return
+
+        from ..staging.watcher import StagingWatcher
+
+        def on_new_zip(preview):
+            """Handle new ZIP detected."""
+            self.call_from_thread(
+                self.notify,
+                f"New ZIP: {preview.case_id} ({preview.zip_size_mb:.1f} MB)",
+                severity="information",
+                timeout=5,
+            )
+
+        def on_process_complete(case_id: str, success: bool):
+            """Handle processing completion."""
+            if success:
+                self.call_from_thread(
+                    self.notify,
+                    f"Imported: {case_id}",
+                    severity="information",
+                    timeout=5,
+                )
+            else:
+                self.call_from_thread(
+                    self.notify,
+                    f"Import failed: {case_id}",
+                    severity="error",
+                    timeout=10,
+                )
+
+        self._staging_watcher = StagingWatcher(
+            manager=self._get_staging_manager(),
+            on_new_zip=on_new_zip,
+            on_process_complete=on_process_complete,
+            auto_process=True,
+        )
+        self._staging_watcher.start()
 
     def on_directory_tree_file_selected(
         self, event: CaseDirectoryTree.FileSelected
@@ -930,12 +1002,22 @@ class ThirdChairApp(App):
 def run_tui(
     case_path: Optional[Path] = None,
     search_paths: Optional[list[Path]] = None,
+    staging_dir: Optional[Path] = None,
+    watch_staging: bool = False,
 ) -> None:
     """Run the Third Chair TUI.
 
     Args:
         case_path: Path to case directory (skips selection if provided).
         search_paths: Paths to search for cases.
+        staging_dir: Directory for staging ZIP imports.
+        watch_staging: If True, auto-watch for new ZIPs.
     """
-    app = ThirdChairApp(case_path=case_path, search_paths=search_paths)
+    app = ThirdChairApp(
+        case_path=case_path,
+        search_paths=search_paths,
+        staging_dir=staging_dir,
+    )
+    if watch_staging:
+        app._start_staging_watcher()
     app.run()
