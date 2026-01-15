@@ -1104,6 +1104,154 @@ def viewing_guide(
     console.print(f"\n[green]Viewing guide written to: {output_path}[/green]")
 
 
+@app.command("sync-timeline")
+def sync_timeline(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    extract_watermarks: bool = typer.Option(
+        False,
+        "--extract-watermarks", "-e",
+        help="Extract timestamps from video watermarks using OCR",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force", "-f",
+        help="Re-extract timestamps even if they exist",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Output file for synchronized timeline",
+    ),
+):
+    """
+    Build a synchronized multi-camera timeline.
+
+    Extracts UTC timestamps from Axon body camera watermarks and
+    creates a unified timeline that correlates events across multiple
+    cameras by their synchronized time.
+
+    Steps:
+    1. Extract frames from video files
+    2. Read Axon watermark timestamps using OCR
+    3. Build synchronized timeline mapping events to multiple camera views
+    4. Export timeline with relative timecodes for each camera
+
+    Example:
+        third-chair sync-timeline ./case --extract-watermarks
+        third-chair sync-timeline ./case --output timeline.json
+    """
+    from ..models import Case, FileType
+    from ..documents.watermark_reader import extract_watermark_timestamp
+    from ..summarization.multi_camera_timeline import (
+        build_multi_camera_timeline,
+        format_synchronized_timeline,
+    )
+    import json
+
+    case_file = case_dir / "case.json"
+    if not case_file.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    case = Case.load(case_file)
+    console.print(f"\n[bold]Synchronizing Timeline: {case.case_id}[/bold]\n")
+
+    # Get video evidence items
+    video_items = [
+        e for e in case.evidence_items
+        if e.file_type == FileType.VIDEO
+    ]
+
+    if not video_items:
+        console.print("[yellow]No video files found in case.[/yellow]")
+        return
+
+    console.print(f"Found {len(video_items)} video file(s)")
+
+    # Step 1: Extract watermark timestamps
+    if extract_watermarks:
+        console.print("\n[bold]Step 1: Extracting watermark timestamps...[/bold]")
+
+        extracted_count = 0
+        for i, evidence in enumerate(video_items, 1):
+            # Skip if already has timestamp and not forcing
+            if not force and evidence.metadata.get("utc_start_time"):
+                console.print(f"  [{i}/{len(video_items)}] {evidence.filename}: [dim]already extracted[/dim]")
+                extracted_count += 1
+                continue
+
+            console.print(f"  [{i}/{len(video_items)}] {evidence.filename}...", end=" ")
+
+            # Extract watermark
+            watermark = extract_watermark_timestamp(evidence.file_path)
+
+            if watermark:
+                evidence.metadata["utc_start_time"] = watermark.utc_timestamp.isoformat()
+                evidence.metadata["camera_model"] = watermark.camera_model
+                evidence.metadata["serial_number"] = watermark.serial_number
+                evidence.metadata["watermark_confidence"] = watermark.confidence
+                extracted_count += 1
+                console.print(f"[green]{watermark.utc_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}[/green]")
+            else:
+                console.print("[yellow]no watermark found[/yellow]")
+
+        console.print(f"\n  Extracted: {extracted_count}/{len(video_items)} videos")
+
+        # Save updated case
+        case.save(case_file)
+        console.print("  [dim]Case saved[/dim]")
+
+    # Step 2: Build synchronized timeline
+    console.print("\n[bold]Step 2: Building synchronized timeline...[/bold]")
+
+    timeline = build_multi_camera_timeline(case)
+
+    if not timeline.camera_views:
+        console.print("[yellow]No cameras with UTC timestamps found.[/yellow]")
+        console.print("[dim]Run with --extract-watermarks to extract timestamps from videos.[/dim]")
+        return
+
+    # Show camera summary
+    console.print(f"\n  Cameras: {len(timeline.camera_views)}")
+    for view in timeline.camera_views:
+        officer_str = f" ({view.officer})" if view.officer else ""
+        console.print(
+            f"    - {view.filename}{officer_str}: "
+            f"{view.utc_start.strftime('%H:%M:%S')} - {view.utc_end.strftime('%H:%M:%S')} UTC"
+        )
+
+    console.print(f"\n  Events: {len(timeline.events)}")
+    if timeline.time_range_start and timeline.time_range_end:
+        console.print(
+            f"  Time range: {timeline.time_range_start.strftime('%Y-%m-%d %H:%M:%S')} - "
+            f"{timeline.time_range_end.strftime('%H:%M:%S')} UTC"
+        )
+
+    # Step 3: Output
+    if output:
+        # Save as JSON
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with open(output, "w") as f:
+            json.dump(timeline.to_dict(), f, indent=2, default=str)
+        console.print(f"\n[green]Timeline saved to: {output}[/green]")
+    else:
+        # Show formatted timeline
+        console.print("\n")
+        formatted = format_synchronized_timeline(timeline)
+        console.print(formatted)
+
+    # Save synchronized timeline to case metadata
+    case.metadata["synchronized_timeline"] = timeline.to_dict()
+    case.save(case_file)
+
+    # Also write text report
+    reports_dir = case_dir / "reports"
+    reports_dir.mkdir(exist_ok=True)
+    timeline_file = reports_dir / "synchronized_timeline.txt"
+    timeline_file.write_text(format_synchronized_timeline(timeline))
+    console.print(f"\n[dim]Timeline report saved to: {timeline_file}[/dim]")
+
+
 @app.command()
 def tui(
     case_dir: Optional[Path] = typer.Argument(
@@ -1404,6 +1552,474 @@ def _process_chat_command(registry, cmd: str, console) -> None:
     else:
         console.print(f"[yellow]Unknown command: {cmd}[/yellow]")
         console.print("[dim]Type 'help' for available commands[/dim]")
+
+
+# =============================================================================
+# Work Item Commands
+# =============================================================================
+
+work_app = typer.Typer(
+    name="work",
+    help="Manage work items (investigations, legal questions, actions, etc.)",
+    no_args_is_help=True,
+)
+app.add_typer(work_app, name="work")
+
+
+@work_app.command("list")
+def work_list(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    status: Optional[str] = typer.Option(
+        None,
+        "--status", "-s",
+        help="Filter by status (pending, in_progress, completed, blocked)",
+    ),
+    item_type: Optional[str] = typer.Option(
+        None,
+        "--type", "-t",
+        help="Filter by type (investigation, legal_question, objective, action, fact)",
+    ),
+    assigned_to: Optional[str] = typer.Option(
+        None,
+        "--assigned", "-a",
+        help="Filter by assignee",
+    ),
+):
+    """List work items for a case."""
+    from ..work import WorkStorage, WorkItemType, WorkItemStatus
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    storage = WorkStorage(case_dir)
+
+    # Parse filters
+    status_filter = WorkItemStatus(status) if status else None
+    type_filter = WorkItemType(item_type) if item_type else None
+
+    items = storage.list_items(
+        status=status_filter,
+        item_type=type_filter,
+        assigned_to=assigned_to,
+    )
+
+    if not items:
+        console.print("[yellow]No work items found.[/yellow]")
+        return
+
+    # Create table
+    table = Table(title=f"Work Items ({len(items)})")
+    table.add_column("ID", style="cyan")
+    table.add_column("Type", style="dim")
+    table.add_column("Title")
+    table.add_column("Status")
+    table.add_column("Priority")
+    table.add_column("Assigned")
+    table.add_column("Due")
+
+    status_colors = {
+        "pending": "yellow",
+        "in_progress": "blue",
+        "completed": "green",
+        "blocked": "red",
+    }
+
+    priority_colors = {
+        "critical": "red bold",
+        "high": "red",
+        "medium": "yellow",
+        "low": "dim",
+    }
+
+    for item in items:
+        status_style = status_colors.get(item.status.value, "")
+        priority_style = priority_colors.get(item.priority.value, "")
+
+        due_str = ""
+        if item.due_date:
+            due_str = item.due_date.strftime("%Y-%m-%d")
+            if item.is_overdue:
+                due_str = f"[red]{due_str} OVERDUE[/red]"
+
+        table.add_row(
+            item.id,
+            item.item_type.value[:3].upper(),
+            item.title[:40] + "..." if len(item.title) > 40 else item.title,
+            f"[{status_style}]{item.status.value}[/{status_style}]",
+            f"[{priority_style}]{item.priority.value}[/{priority_style}]",
+            item.assigned_to or "-",
+            due_str or "-",
+        )
+
+    console.print(table)
+
+
+@work_app.command("add")
+def work_add(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    title: str = typer.Option(..., "--title", "-T", help="Title of the work item"),
+    item_type: str = typer.Option(
+        "action",
+        "--type", "-t",
+        help="Type: investigation, legal_question, objective, action, fact",
+    ),
+    description: str = typer.Option("", "--description", "-d", help="Description"),
+    priority: str = typer.Option("medium", "--priority", "-p", help="Priority: low, medium, high, critical"),
+    assigned_to: Optional[str] = typer.Option(None, "--assigned", "-a", help="Assignee"),
+    due_date: Optional[str] = typer.Option(None, "--due", help="Due date (YYYY-MM-DD)"),
+    tags: Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
+):
+    """Add a new work item."""
+    from ..work import WorkStorage, WorkItemType
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    storage = WorkStorage(case_dir)
+
+    # Parse type
+    try:
+        work_type = WorkItemType(item_type)
+    except ValueError:
+        console.print(f"[red]Invalid type: {item_type}[/red]")
+        console.print("Valid types: investigation, legal_question, objective, action, fact")
+        raise typer.Exit(1)
+
+    # Parse tags
+    tag_list = [t.strip() for t in tags.split(",")] if tags else []
+
+    # Create item
+    item = storage.create_item(
+        item_type=work_type,
+        title=title,
+        description=description,
+        priority=priority,
+        assigned_to=assigned_to,
+        tags=tag_list,
+        due_date=due_date,
+    )
+
+    console.print(f"[green]Created work item:[/green] {item.id}")
+    console.print(f"  Title: {item.title}")
+    console.print(f"  Type: {item.item_type.value}")
+    console.print(f"  Priority: {item.priority.value}")
+    if item.assigned_to:
+        console.print(f"  Assigned to: {item.assigned_to}")
+    if item.due_date:
+        console.print(f"  Due: {item.due_date.strftime('%Y-%m-%d')}")
+
+
+@work_app.command("update")
+def work_update(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    item_id: str = typer.Argument(..., help="Work item ID (e.g., INV-0001)"),
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="New status"),
+    priority: Optional[str] = typer.Option(None, "--priority", "-p", help="New priority"),
+    assigned_to: Optional[str] = typer.Option(None, "--assigned", "-a", help="New assignee"),
+    note: Optional[str] = typer.Option(None, "--note", "-n", help="Add a note"),
+    due_date: Optional[str] = typer.Option(None, "--due", help="New due date"),
+):
+    """Update an existing work item."""
+    from ..work import WorkStorage
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    storage = WorkStorage(case_dir)
+
+    item = storage.update_item(
+        item_id=item_id,
+        status=status,
+        priority=priority,
+        assigned_to=assigned_to,
+        note=note,
+        due_date=due_date,
+    )
+
+    if not item:
+        console.print(f"[red]Work item not found: {item_id}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Updated:[/green] {item.id}")
+    console.print(f"  Status: {item.status.value}")
+    console.print(f"  Priority: {item.priority.value}")
+    if note:
+        console.print(f"  Note added: {note[:50]}...")
+
+
+@work_app.command("status")
+def work_status(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+):
+    """Show work item dashboard for a case."""
+    from ..work import WorkStorage
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    storage = WorkStorage(case_dir)
+    summary = storage.get_summary()
+
+    console.print(f"\n[bold]Work Items Dashboard[/bold]")
+    console.print(f"Case: [cyan]{summary['case_id']}[/cyan]")
+
+    if summary['attorney']:
+        console.print(f"Attorney: {summary['attorney']}")
+    if summary['resolution_path']:
+        console.print(f"Resolution path: {summary['resolution_path']}")
+
+    console.print(f"\nLast touch: [dim]{summary['last_touch']}[/dim]")
+    if summary['last_action']:
+        console.print(f"Last action: {summary['last_action']}")
+
+    # Stats
+    stats = summary['stats']
+    console.print(f"\n[bold]Statistics[/bold]")
+    console.print(f"  Total: {stats['total']}")
+    console.print(f"  Pending: [yellow]{stats['pending']}[/yellow]")
+    console.print(f"  In Progress: [blue]{stats['in_progress']}[/blue]")
+    console.print(f"  Completed: [green]{stats['completed']}[/green]")
+    console.print(f"  Blocked: [red]{stats['blocked']}[/red]")
+    if stats['overdue'] > 0:
+        console.print(f"  [red bold]OVERDUE: {stats['overdue']}[/red bold]")
+
+    # Overdue items
+    if summary['overdue']:
+        console.print(f"\n[red bold]Overdue Items:[/red bold]")
+        for item in summary['overdue'][:5]:
+            console.print(f"  {item.id}: {item.title}")
+
+    # Recent pending
+    if summary['recent_pending']:
+        console.print(f"\n[yellow]Recent Pending:[/yellow]")
+        for item in summary['recent_pending'][:5]:
+            console.print(f"  {item.id}: {item.title}")
+
+
+@work_app.command("show")
+def work_show(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    item_id: str = typer.Argument(..., help="Work item ID"),
+):
+    """Show details of a specific work item."""
+    from ..work import WorkStorage
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    storage = WorkStorage(case_dir)
+    item = storage.load_item(item_id)
+
+    if not item:
+        console.print(f"[red]Work item not found: {item_id}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]{item.id}: {item.title}[/bold]")
+    console.print(f"Type: {item.item_type.value}")
+    console.print(f"Status: {item.status.value}")
+    console.print(f"Priority: {item.priority.value}")
+
+    if item.description:
+        console.print(f"\n[dim]Description:[/dim]")
+        console.print(f"  {item.description}")
+
+    if item.assigned_to:
+        console.print(f"\nAssigned to: {item.assigned_to}")
+    if item.due_date:
+        due_str = item.due_date.strftime("%Y-%m-%d")
+        if item.is_overdue:
+            console.print(f"Due: [red]{due_str} (OVERDUE)[/red]")
+        else:
+            console.print(f"Due: {due_str}")
+
+    if item.tags:
+        console.print(f"Tags: {', '.join(item.tags)}")
+
+    if item.blocked_by:
+        console.print(f"[red]Blocked by: {', '.join(item.blocked_by)}[/red]")
+
+    if item.supports_propositions:
+        console.print(f"Supports propositions: {', '.join(item.supports_propositions)}")
+
+    if item.notes:
+        console.print(f"\n[dim]Notes ({len(item.notes)}):[/dim]")
+        for note in item.notes[-5:]:
+            date_str = note.date.strftime("%Y-%m-%d") if hasattr(note.date, 'strftime') else str(note.date)
+            console.print(f"  [{date_str}] {note.text}")
+
+    console.print(f"\nCreated: {item.created}")
+    console.print(f"Updated: {item.updated}")
+
+
+@work_app.command("complete")
+def work_complete(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    item_id: str = typer.Argument(..., help="Work item ID"),
+    note: Optional[str] = typer.Option(None, "--note", "-n", help="Completion note"),
+):
+    """Mark a work item as completed."""
+    from ..work import WorkStorage
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    storage = WorkStorage(case_dir)
+    item = storage.load_item(item_id)
+
+    if not item:
+        console.print(f"[red]Work item not found: {item_id}[/red]")
+        raise typer.Exit(1)
+
+    item.mark_completed(note)
+    storage.save_item(item)
+
+    # Update index
+    index = storage.load_index()
+    index.touch(f"Completed {item_id}")
+    all_items = storage.load_all_items()
+    index.update_stats(all_items)
+    storage.save_index()
+
+    console.print(f"[green]Completed:[/green] {item.id} - {item.title}")
+
+
+@work_app.command("init")
+def work_init(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    attorney: Optional[str] = typer.Option(None, "--attorney", "-a", help="Attorney name"),
+    resolution_path: Optional[str] = typer.Option(
+        None,
+        "--resolution", "-r",
+        help="Resolution path: trial, plea, dismissal",
+    ),
+):
+    """Initialize work items for a case."""
+    from ..work import init_work_storage
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    # Load case ID from case.json if available
+    case_id = case_dir.name
+    case_json = case_dir / "case.json"
+    if case_json.exists():
+        import json
+        with open(case_json) as f:
+            data = json.load(f)
+            case_id = data.get("case_id", case_id)
+
+    storage = init_work_storage(case_dir, case_id)
+    index = storage.load_index(case_id)
+
+    if attorney:
+        index.attorney = attorney
+    if resolution_path:
+        index.resolution_path = resolution_path
+
+    index.touch("Initialized work items")
+    storage.save_index()
+
+    console.print(f"[green]Initialized work items for case:[/green] {case_id}")
+    console.print(f"Work directory: {storage.work_dir}")
+    if attorney:
+        console.print(f"Attorney: {attorney}")
+    if resolution_path:
+        console.print(f"Resolution path: {resolution_path}")
+
+
+@work_app.command("suggest")
+def work_suggest(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    max_suggestions: int = typer.Option(5, "--max", "-m", help="Maximum suggestions"),
+    auto_create: bool = typer.Option(False, "--create", "-c", help="Auto-create all suggestions"),
+    model: str = typer.Option("gemma2:2b", "--model", help="Ollama model to use"),
+):
+    """AI-suggest work items based on case analysis."""
+    from ..work import WorkStorage, suggest_work_items, create_suggested_items
+    from ..models import Case
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    case_json = case_dir / "case.json"
+    if not case_json.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]Analyzing case with {model}...[/dim]")
+
+    case = Case.load(case_json)
+    storage = WorkStorage(case_dir)
+
+    suggestions = suggest_work_items(storage, case, max_suggestions, model)
+
+    if not suggestions:
+        console.print("[yellow]No suggestions generated. Is Ollama running?[/yellow]")
+        console.print(f"[dim]Try: ollama pull {model}[/dim]")
+        return
+
+    console.print(f"\n[bold]Suggested Work Items ({len(suggestions)})[/bold]\n")
+
+    for i, suggestion in enumerate(suggestions, 1):
+        console.print(f"[cyan]{i}.[/cyan] [{suggestion.get('type', 'action')}] {suggestion.get('title', 'Untitled')}")
+        console.print(f"   [dim]{suggestion.get('description', '')[:80]}...[/dim]")
+        console.print(f"   Priority: {suggestion.get('priority', 'medium')}")
+        console.print()
+
+    if auto_create:
+        created = create_suggested_items(storage, suggestions)
+        console.print(f"[green]Created {len(created)} work items:[/green]")
+        for item in created:
+            console.print(f"  {item.id}: {item.title}")
+    else:
+        console.print("[dim]Use --create to automatically create these items[/dim]")
+
+
+@work_app.command("create")
+def work_create(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    description: str = typer.Argument(..., help="Natural language description of work item"),
+    model: str = typer.Option("gemma2:2b", "--model", help="Ollama model to use"),
+):
+    """Create work item from natural language description using AI."""
+    from ..work import WorkStorage, create_work_item_from_text
+    from ..models import Case
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]Processing with {model}...[/dim]")
+
+    # Load case if available for context
+    case = None
+    case_json = case_dir / "case.json"
+    if case_json.exists():
+        from ..models import Case
+        case = Case.load(case_json)
+
+    storage = WorkStorage(case_dir)
+    item = create_work_item_from_text(storage, description, case, model)
+
+    if not item:
+        console.print("[yellow]Failed to create work item. Is Ollama running?[/yellow]")
+        console.print(f"[dim]Try: ollama pull {model}[/dim]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Created work item:[/green] {item.id}")
+    console.print(f"  Title: {item.title}")
+    console.print(f"  Type: {item.item_type.value}")
+    console.print(f"  Priority: {item.priority.value}")
+    if item.description:
+        console.print(f"  Description: {item.description[:100]}...")
 
 
 @app.command()
