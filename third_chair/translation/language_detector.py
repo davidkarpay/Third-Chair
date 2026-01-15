@@ -1,6 +1,5 @@
 """Language detection for transcript segments."""
 
-from pathlib import Path
 from typing import Optional
 
 from ..models import Language, ReviewFlag, Transcript, TranscriptSegment
@@ -33,35 +32,26 @@ ENGLISH_INDICATORS = {
     "what", "where", "when", "why", "how", "which", "who",
 }
 
-# Lazy-loaded FastText model
-_fasttext_model = None
+def detect_with_fastlangdetect(text: str, k: int = 2) -> Optional[list]:
+    """
+    Detect language using fast-langdetect library.
 
+    Args:
+        text: Text to analyze
+        k: Number of top predictions to return
 
-def get_fasttext_model():
-    """Get or load the FastText language detection model."""
-    global _fasttext_model
-
-    if _fasttext_model is None:
-        try:
-            import fasttext
-
-            # Try to load pre-downloaded model
-            model_path = Path.home() / ".cache" / "third_chair" / "lid.176.ftz"
-
-            if not model_path.exists():
-                # Download model
-                model_path.parent.mkdir(parents=True, exist_ok=True)
-                import urllib.request
-                url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
-                print(f"Downloading language detection model...")
-                urllib.request.urlretrieve(url, model_path)
-
-            _fasttext_model = fasttext.load_model(str(model_path))
-        except ImportError:
-            _fasttext_model = None
-            print("Warning: FastText not available. Using keyword-based detection only.")
-
-    return _fasttext_model
+    Returns:
+        List of dicts like [{"lang": "en", "score": 0.99}, ...] or None if unavailable
+    """
+    try:
+        from fast_langdetect import detect
+        # fast-langdetect returns list of dicts with lang and score
+        results = detect(text.replace("\n", " "), k=k)
+        return results
+    except ImportError:
+        return None
+    except Exception:
+        return None
 
 
 def detect_language(text: str) -> tuple[Language, float]:
@@ -70,7 +60,7 @@ def detect_language(text: str) -> tuple[Language, float]:
 
     Uses a two-tier approach:
     1. Quick keyword-based detection for obvious cases
-    2. FastText model for ambiguous cases
+    2. fast-langdetect library for ambiguous cases
 
     Args:
         text: Text to analyze
@@ -106,33 +96,23 @@ def detect_language(text: str) -> tuple[Language, float]:
     if spanish_ratio > 0.1 and english_ratio > 0.1:
         return Language.MIXED, 0.7
 
-    # Use FastText for ambiguous cases
-    model = get_fasttext_model()
-    if model is not None:
-        try:
-            # FastText prediction
-            predictions = model.predict(text.replace("\n", " "), k=2)
-            labels = predictions[0]
-            scores = predictions[1]
+    # Use fast-langdetect for ambiguous cases
+    results = detect_with_fastlangdetect(text, k=2)
+    if results:
+        primary = results[0]
+        primary_lang = primary.get("lang", "")
+        primary_score = primary.get("score", 0.0)
 
-            if labels and scores:
-                # Parse FastText label (e.g., "__label__en")
-                primary_lang = labels[0].replace("__label__", "")
-                primary_score = scores[0]
+        if primary_lang == "en":
+            return Language.ENGLISH, float(primary_score)
+        elif primary_lang == "es":
+            return Language.SPANISH, float(primary_score)
 
-                if primary_lang == "en":
-                    return Language.ENGLISH, float(primary_score)
-                elif primary_lang == "es":
-                    return Language.SPANISH, float(primary_score)
-
-                # Check if both English and Spanish are present
-                if len(labels) > 1:
-                    secondary_lang = labels[1].replace("__label__", "")
-                    if {primary_lang, secondary_lang} == {"en", "es"}:
-                        return Language.MIXED, float(primary_score)
-
-        except Exception:
-            pass
+        # Check if both English and Spanish are present
+        if len(results) > 1:
+            secondary_lang = results[1].get("lang", "")
+            if {primary_lang, secondary_lang} == {"en", "es"}:
+                return Language.MIXED, float(primary_score)
 
     # Fallback based on keyword ratios
     if spanish_ratio > english_ratio:
