@@ -234,14 +234,45 @@ class Case:
         )
 
     def save(self, path: Optional[Path] = None) -> Path:
-        """Save case to JSON file."""
+        """
+        Save case to JSON file.
+
+        If the case directory has an encrypted vault and session is active,
+        saves to case.json.enc. Otherwise saves to case.json.
+        """
         if path is None:
             if self.output_dir is None:
                 raise ValueError("No output directory specified")
             path = self.output_dir / "case.json"
 
         path.parent.mkdir(parents=True, exist_ok=True)
+        case_dir = path.parent
 
+        # Check if vault is encrypted and unlocked
+        try:
+            from ..vault import is_vault_encrypted, get_vault_session, VaultManager
+
+            if is_vault_encrypted(case_dir):
+                session = get_vault_session(case_dir)
+                if session:
+                    # Save encrypted
+                    vm = VaultManager(case_dir)
+                    encrypted_path = vm.get_encrypted_path(path)
+                    vm.encrypt_json(self.to_dict(), encrypted_path, session)
+
+                    # Remove unencrypted version if it exists
+                    if path.exists() and path != encrypted_path:
+                        path.unlink()
+
+                    return encrypted_path
+                else:
+                    # Vault is locked - can't save
+                    from ..vault import VaultLockedError
+                    raise VaultLockedError(f"Vault is locked. Unlock with 'vault-unlock' to save: {case_dir}")
+        except ImportError:
+            pass  # Vault module not available, save unencrypted
+
+        # Save unencrypted
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
@@ -249,7 +280,44 @@ class Case:
 
     @classmethod
     def load(cls, path: Path) -> "Case":
-        """Load case from JSON file."""
+        """
+        Load case from JSON file.
+
+        Automatically handles encrypted vaults if session is active.
+        Looks for case.json.enc first, then falls back to case.json.
+        """
+        case_dir = path.parent
+
+        # Check for encrypted vault
+        try:
+            from ..vault import is_vault_encrypted, get_vault_session, VaultManager
+
+            if is_vault_encrypted(case_dir):
+                session = get_vault_session(case_dir)
+                if session:
+                    vm = VaultManager(case_dir)
+
+                    # Check for encrypted version
+                    encrypted_path = vm.get_encrypted_path(path)
+                    if encrypted_path.exists():
+                        data = vm.decrypt_json(encrypted_path, session)
+                        return cls.from_dict(data)
+
+                    # Fall back to unencrypted if exists
+                    if path.exists():
+                        with open(path, encoding="utf-8") as f:
+                            data = json.load(f)
+                        return cls.from_dict(data)
+
+                    raise FileNotFoundError(f"Case file not found: {path} or {encrypted_path}")
+                else:
+                    # Vault is locked
+                    from ..vault import VaultLockedError
+                    raise VaultLockedError(f"Vault is locked. Unlock with 'vault-unlock' to load: {case_dir}")
+        except ImportError:
+            pass  # Vault module not available, load unencrypted
+
+        # Load unencrypted
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)

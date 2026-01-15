@@ -153,6 +153,37 @@ class EvidenceItem:
         self.processing_status = ProcessingStatus.COMPLETED
         self.error_message = None
 
+    def get_decrypted_path(self, case_dir: Optional[Path] = None) -> Path:
+        """
+        Get path to the evidence file, handling encryption transparently.
+
+        For encrypted vaults, returns an EncryptedPath that decrypts on access.
+        For unencrypted cases, returns the original file_path.
+
+        The returned path is compatible with subprocess calls (e.g., FFmpeg)
+        via __fspath__() method.
+
+        Args:
+            case_dir: Case directory (uses file_path.parent.parent if not provided)
+
+        Returns:
+            Path or EncryptedPath for accessing the file
+        """
+        if case_dir is None:
+            # Assume standard structure: case_dir/extracted/file.ext
+            case_dir = self.file_path.parent.parent
+
+        try:
+            from ..vault import get_evidence_path
+
+            return get_evidence_path(self.file_path, case_dir)
+        except ImportError:
+            # Vault module not available
+            return self.file_path
+        except Exception:
+            # Vault not encrypted or not unlocked - return original
+            return self.file_path
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
