@@ -4,13 +4,20 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.widgets import Footer, Header, Static
 
-from .screens import CaseSelectionScreen, discover_cases
+from .screens import CaseSelectionScreen, FileViewerScreen, discover_cases
 from .widgets import CaseDirectoryTree, CaseInfoPanel, ChatPanel
+from ..chat.intent_extractor import (
+    extract_intent,
+    format_confirmation_prompt,
+    ExtractedIntent,
+    IntentResult,
+)
 
 
 class ThirdChairApp(App):
@@ -193,7 +200,9 @@ class ThirdChairApp(App):
 
         # Process the command
         response = self._process_chat_command(query)
-        chat_panel.add_response(response)
+        # Only add response if not empty (async commands handle their own response)
+        if response:
+            chat_panel.add_response(response)
 
     def _process_chat_command(self, cmd: str) -> str:
         """Process a chat command and return the response.
@@ -241,6 +250,10 @@ class ThirdChairApp(App):
         if cmd_lower == "tools":
             return self._get_tools()
 
+        # Sync timeline
+        if cmd_lower == "sync-timeline" or cmd_lower == "sync":
+            return self._get_sync_timeline()
+
         # Search command
         if cmd_lower.startswith("search "):
             query = cmd[7:].strip()
@@ -251,7 +264,8 @@ class ThirdChairApp(App):
             quote = cmd[9:].strip()
             return self._who_said(quote)
 
-        return f"[yellow]Unknown command: {cmd}[/yellow]\nType 'help' for available commands."
+        # NLP fallback: Try to extract intent from natural language
+        return self._try_nlp_intent(cmd)
 
     def _get_help_text(self) -> str:
         """Get help text."""
@@ -262,10 +276,19 @@ class ThirdChairApp(App):
   [cyan]witnesses[/cyan]         List all witnesses
   [cyan]case[/cyan]              Show case information
   [cyan]timeline[/cyan]          Show timeline (first 20 events)
+  [cyan]sync-timeline[/cyan]     Show synchronized multi-camera timeline
   [cyan]propositions[/cyan]      List propositions
   [cyan]tools[/cyan]             List all available tools
   [cyan]who said <quote>[/cyan]  Find who said a quote
-  [cyan]help[/cyan]              Show this help"""
+  [cyan]help[/cyan]              Show this help
+
+[bold]Natural Language:[/bold]
+  You can also ask questions naturally, e.g.:
+  - "show me all the threats"
+  - "who talked about the knife"
+  - "find statements about self defense"
+
+  If I'm unsure what you mean, I'll ask for confirmation."""
 
     def _get_case_info(self) -> str:
         """Get case information."""
@@ -410,6 +433,69 @@ class ThirdChairApp(App):
 
         return "\n".join(lines)
 
+    def _get_sync_timeline(self) -> str:
+        """Get synchronized multi-camera timeline."""
+        if not self.case:
+            return "[red]No case loaded.[/red]"
+
+        # Check if synchronized timeline exists in metadata
+        sync_data = self.case.metadata.get("synchronized_timeline")
+        if not sync_data:
+            return (
+                "[yellow]No synchronized timeline found.[/yellow]\n\n"
+                "Run the following command to build it:\n"
+                "  [cyan]third-chair sync-timeline /path/to/case --extract-watermarks[/cyan]"
+            )
+
+        camera_views = sync_data.get("camera_views", [])
+        events = sync_data.get("events", [])
+
+        lines = [f"[bold]Synchronized Timeline[/bold]"]
+        lines.append(f"Cameras: {len(camera_views)} | Events: {len(events)}\n")
+
+        # Camera summary
+        lines.append("[cyan]Cameras:[/cyan]")
+        for view in camera_views[:5]:
+            officer = f" ({view.get('officer')})" if view.get("officer") else ""
+            utc_start = view.get("utc_start", "?")[:19]
+            lines.append(f"  {view.get('filename', '?')}{officer}")
+            lines.append(f"    Start: {utc_start} UTC")
+
+        if len(camera_views) > 5:
+            lines.append(f"  ... and {len(camera_views) - 5} more cameras")
+
+        # Events
+        lines.append("\n[cyan]Events:[/cyan]")
+        for event in events[:15]:
+            utc_time = event.get("utc_timestamp", "?")[:19]
+            desc = event.get("description", "")[:50]
+            importance = event.get("importance", "normal")
+
+            # Importance marker
+            marker = ""
+            if importance == "critical":
+                marker = "[red][!!!][/red] "
+            elif importance == "high":
+                marker = "[yellow][!][/yellow] "
+
+            lines.append(f"  [{utc_time}] {marker}{desc}")
+
+            # Show relative timecodes for cameras
+            timecodes = event.get("relative_timecodes", {})
+            if timecodes:
+                tc_strs = []
+                for ev_id, secs in list(timecodes.items())[:3]:
+                    mins = int(secs // 60)
+                    sec = int(secs % 60)
+                    tc_strs.append(f"{mins}:{sec:02d}")
+                if tc_strs:
+                    lines.append(f"    [dim][{'] ['.join(tc_strs)}][/dim]")
+
+        if len(events) > 15:
+            lines.append(f"\n  ... and {len(events) - 15} more events")
+
+        return "\n".join(lines)
+
     def _search_transcripts(self, query: str) -> str:
         """Search transcripts for a query."""
         if not self.case:
@@ -473,6 +559,205 @@ class ThirdChairApp(App):
 
         return f"[yellow]No match found for '{quote}'[/yellow]"
 
+    def _try_nlp_intent(self, cmd: str) -> str:
+        """Try to extract intent using NLP.
+
+        Starts a background worker for Ollama call to keep UI responsive.
+
+        Args:
+            cmd: The user's natural language query.
+
+        Returns:
+            Empty string (result handled async via worker).
+        """
+        if not self.registry:
+            return f"[yellow]Unknown command: {cmd}[/yellow]\nType 'help' for available commands."
+
+        # Show loading indicator
+        chat_panel = self.query_one("#chat-panel", ChatPanel)
+        chat_panel.show_loading("Thinking...")
+
+        # Start background worker for intent extraction
+        self._run_intent_extraction(cmd)
+
+        # Return empty - result will be handled by worker callback
+        return ""
+
+    @work(exclusive=True, thread=True)
+    def _run_intent_extraction(self, cmd: str) -> None:
+        """Run intent extraction in background thread.
+
+        Args:
+            cmd: The user's natural language query.
+        """
+        # Get tool schemas from registry
+        tool_schemas = self.registry.get_json_schemas()
+
+        # Build case context for better intent extraction
+        case_context = None
+        if self.case:
+            case_context = (
+                f"Case with {self.case.evidence_count} evidence items, "
+                f"{len(self.case.witnesses.witnesses)} witnesses"
+            )
+
+        # Extract intent (blocking call, but in background thread)
+        result: IntentResult = extract_intent(cmd, tool_schemas, case_context)
+
+        # Process result on main thread via call_from_thread
+        self.call_from_thread(self._handle_intent_result, result, cmd)
+
+    def _handle_intent_result(self, result: IntentResult, original_cmd: str) -> None:
+        """Handle intent extraction result on main thread.
+
+        Args:
+            result: The intent extraction result.
+            original_cmd: The original command for error messages.
+        """
+        chat_panel = self.query_one("#chat-panel", ChatPanel)
+        chat_panel.hide_loading()
+
+        if not result.success:
+            chat_panel.add_response(
+                f"[yellow]Could not understand: {original_cmd}[/yellow]\n"
+                f"[dim]{result.error}[/dim]\n"
+                "Type 'help' for available commands."
+            )
+            return
+
+        intent = result.intent
+
+        # No matching tool
+        if intent.tool_name == "none" or intent.confidence < 0.3:
+            chat_panel.add_response(
+                f"[yellow]I'm not sure what you mean.[/yellow]\n"
+                f"{intent.interpretation}\n"
+                "Type 'help' for available commands."
+            )
+            return
+
+        # High confidence (>0.8): Execute immediately with brief note
+        if intent.confidence >= 0.8:
+            response = self._execute_intent(intent)
+            chat_panel.add_response(response)
+            return
+
+        # Medium/low confidence: Show confirmation prompt
+        chat_panel.set_pending_intent(intent)
+        chat_panel.add_response(format_confirmation_prompt(intent))
+
+    def _execute_intent(self, intent: ExtractedIntent) -> str:
+        """Execute an extracted intent via the tool registry.
+
+        Args:
+            intent: The intent to execute.
+
+        Returns:
+            Result of the tool execution.
+        """
+        if not self.registry:
+            return "[red]No registry available.[/red]"
+
+        # Invoke the tool
+        result = self.registry.invoke(intent.tool_name, **intent.parameters)
+
+        if not result.success:
+            return f"[red]Error: {result.error}[/red]"
+
+        # Format the result
+        if result.data:
+            return self._format_tool_result(intent.tool_name, result.data)
+
+        return result.text or "[dim]No results.[/dim]"
+
+    def _format_tool_result(self, tool_name: str, data: any) -> str:
+        """Format tool result data for display.
+
+        Args:
+            tool_name: Name of the tool that produced the result.
+            data: The result data.
+
+        Returns:
+            Formatted string for display.
+        """
+        if isinstance(data, str):
+            return data
+
+        if isinstance(data, list):
+            if not data:
+                return "[yellow]No results found.[/yellow]"
+
+            lines = [f"[bold]Results ({len(data)} found)[/bold]"]
+            for item in data[:15]:
+                if isinstance(item, dict):
+                    # Try common fields
+                    text = item.get("text", item.get("description", str(item)))[:60]
+                    lines.append(f"  - {text}")
+                else:
+                    lines.append(f"  - {str(item)[:60]}")
+
+            if len(data) > 15:
+                lines.append(f"  ... and {len(data) - 15} more")
+
+            return "\n".join(lines)
+
+        if isinstance(data, dict):
+            lines = [f"[bold]{tool_name.replace('_', ' ').title()}[/bold]"]
+            for key, value in list(data.items())[:10]:
+                lines.append(f"  {key}: {value}")
+            return "\n".join(lines)
+
+        return str(data)
+
+    def on_chat_panel_confirmation_response(
+        self, event: ChatPanel.ConfirmationResponse
+    ) -> None:
+        """Handle confirmation response from chat panel."""
+        chat_panel = self.query_one("#chat-panel", ChatPanel)
+        response = event.response.lower().strip()
+        intent = event.intent
+
+        # Clear the pending intent first
+        chat_panel.clear_pending_intent()
+
+        # Handle response
+        if response in ("y", "yes", "1"):
+            # Execute the intent
+            result = self._execute_intent(intent)
+            chat_panel.add_response(result)
+
+        elif response in ("n", "no", "cancel"):
+            chat_panel.add_response("[dim]Cancelled.[/dim]")
+
+        elif response in ("?", "alternatives", "other"):
+            # Show alternatives
+            if intent.alternatives:
+                lines = ["[bold]Other possibilities:[/bold]"]
+                for i, alt in enumerate(intent.alternatives[:5], 1):
+                    lines.append(f"  {i}. {alt}")
+                lines.append("\nType your query again to try a different approach.")
+                chat_panel.add_response("\n".join(lines))
+            else:
+                chat_panel.add_response(
+                    "[dim]No alternatives available. Try rephrasing your query.[/dim]"
+                )
+
+        elif response.isdigit():
+            # User selected a numbered alternative
+            num = int(response)
+            if 1 <= num <= len(intent.alternatives):
+                chat_panel.add_response(
+                    f"[dim]Selected: {intent.alternatives[num-1]}[/dim]\n"
+                    "Please rephrase your query more specifically."
+                )
+            else:
+                chat_panel.add_response("[yellow]Invalid selection.[/yellow]")
+
+        else:
+            # Treat as a new query
+            response_text = self._process_chat_command(event.response)
+            chat_panel.add_response(response_text)
+
     def action_switch_panel(self) -> None:
         """Switch focus between panels."""
         if self._active_panel == "chat":
@@ -499,6 +784,20 @@ class ThirdChairApp(App):
     def action_quit(self) -> None:
         """Quit the application."""
         self.exit()
+
+    def on_directory_tree_file_selected(
+        self, event: CaseDirectoryTree.FileSelected
+    ) -> None:
+        """Handle file selection in the directory tree.
+
+        Opens markdown and text files in a modal viewer.
+
+        Args:
+            event: The file selected event.
+        """
+        path = event.path
+        if path.suffix.lower() in (".md", ".txt"):
+            self.push_screen(FileViewerScreen(path))
 
 
 def run_tui(

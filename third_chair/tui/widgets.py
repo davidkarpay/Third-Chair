@@ -1,7 +1,7 @@
 """Custom widgets for Third Chair TUI."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -13,6 +13,9 @@ from textual.widgets import (
     RichLog,
 )
 from textual.message import Message
+
+if TYPE_CHECKING:
+    from ..chat.intent_extractor import ExtractedIntent
 
 
 class CaseDirectoryTree(DirectoryTree):
@@ -142,6 +145,20 @@ class ChatPanel(Container):
             self.query = query
             super().__init__()
 
+    class ConfirmationResponse(Message):
+        """Message sent when user responds to a confirmation prompt."""
+
+        def __init__(self, response: str, intent: "ExtractedIntent") -> None:
+            """Initialize the message.
+
+            Args:
+                response: User's response (y/n/?/number).
+                intent: The pending intent being confirmed.
+            """
+            self.response = response
+            self.intent = intent
+            super().__init__()
+
     def __init__(
         self,
         *,
@@ -158,6 +175,8 @@ class ChatPanel(Container):
         """
         super().__init__(name=name, id=id, classes=classes)
         self._history: list[tuple[str, bool]] = []  # (message, is_user)
+        self._pending_intent: Optional["ExtractedIntent"] = None
+        self._is_loading: bool = False
 
     def compose(self) -> ComposeResult:
         """Compose the chat panel."""
@@ -184,6 +203,15 @@ class ChatPanel(Container):
         # Clear input
         event.input.value = ""
 
+        # Check if we're waiting for a confirmation response
+        if self._pending_intent is not None:
+            log = self.query_one("#chat-log", RichLog)
+            log.write(f"[bold cyan]You:[/bold cyan] {query}")
+
+            # Post confirmation response
+            self.post_message(self.ConfirmationResponse(query, self._pending_intent))
+            return
+
         # Add to history and display
         self._history.append((query, True))
         log = self.query_one("#chat-log", RichLog)
@@ -191,6 +219,29 @@ class ChatPanel(Container):
 
         # Emit message for parent to handle
         self.post_message(self.ChatSubmitted(query))
+
+    def set_pending_intent(self, intent: "ExtractedIntent") -> None:
+        """Set a pending intent awaiting confirmation.
+
+        Args:
+            intent: The intent to confirm.
+        """
+        self._pending_intent = intent
+        # Update input placeholder to indicate confirmation mode
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.placeholder = "[Y]es / [N]o / [?] alternatives"
+
+    def clear_pending_intent(self) -> None:
+        """Clear any pending intent."""
+        self._pending_intent = None
+        # Restore normal placeholder
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.placeholder = "Enter command (help for commands)"
+
+    @property
+    def has_pending_intent(self) -> bool:
+        """Check if there's a pending intent."""
+        return self._pending_intent is not None
 
     def add_response(self, response: str) -> None:
         """Add an assistant response to the chat.
@@ -215,6 +266,32 @@ class ChatPanel(Container):
     def focus_input(self) -> None:
         """Focus the input field."""
         self.query_one("#chat-input", Input).focus()
+
+    def show_loading(self, message: str = "Thinking...") -> None:
+        """Show loading indicator.
+
+        Args:
+            message: Loading message to display.
+        """
+        self._is_loading = True
+        log = self.query_one("#chat-log", RichLog)
+        log.write(f"[dim italic]{message}[/dim italic]")
+        # Disable input while loading
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.placeholder = message
+        input_widget.disabled = True
+
+    def hide_loading(self) -> None:
+        """Hide loading indicator and re-enable input."""
+        self._is_loading = False
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.disabled = False
+        input_widget.placeholder = "Enter command (help for commands)"
+
+    @property
+    def is_loading(self) -> bool:
+        """Check if currently loading."""
+        return self._is_loading
 
 
 class CaseInfoPanel(Static):
