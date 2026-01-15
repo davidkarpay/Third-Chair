@@ -14,6 +14,8 @@ Third Chair is a legal discovery processing tool designed for defense attorneys 
 - **Report Generation**: Create attorney-ready reports with Bates numbering
 - **Proposition Analysis**: Skanda Framework for evidence-backed legal proposition evaluation
 - **Interactive Research**: Chat interface and TUI for case exploration
+- **Staging Area**: Drop-folder workflow for batch ZIP import with preview
+- **Case Encryption**: AES-256 vault protection for sensitive case data
 
 ## Requirements
 
@@ -45,6 +47,12 @@ ollama serve
 ollama pull aya-expanse:8b
 ollama pull mistral:7b
 ```
+
+### Windows Support
+
+Third Chair runs on both Windows (native) and WSL. Python 3.10+ on Windows is fully supported.
+
+**Note:** For best performance on Windows without GPU, the application uses CPU-optimized inference.
 
 ## Quick Start
 
@@ -107,10 +115,18 @@ third-chair chat ./my_case --query "search knife"
 | `report` | Generate attorney reports (DOCX, PDF) |
 | `vision` | Analyze evidence photos using vision AI |
 | `viewing-guide` | Generate recommended viewing timestamps |
+| `sync-timeline` | Build synchronized multi-camera timeline |
 | `chat` | Interactive research assistant |
 | `info` | Display ZIP contents without extracting |
 | `status` | Display processing status of a case |
 | `version` | Display version information |
+| `vault-init` | Initialize encryption vault on a case |
+| `vault-unlock` | Unlock encrypted case for processing |
+| `vault-lock` | Lock encrypted case |
+| `vault-status` | Show vault encryption status |
+| `vault-export` | Export decrypted copy of case |
+| `vault-rotate` | Change vault password |
+| `vault-verify` | Verify vault integrity |
 
 ### TUI Command
 
@@ -127,6 +143,7 @@ third-chair tui --search-path /mnt/d/cases
 
 Keyboard shortcuts:
 - Tab: Switch between directory tree and chat panels
+- s: Open staging screen (import ZIPs)
 - Q: Quit application
 - ?: Display help
 
@@ -211,6 +228,27 @@ third-chair viewing-guide ./my_case --flags THREAT_KEYWORD,VIOLENCE_KEYWORD
 third-chair viewing-guide ./my_case --output ./review_timestamps.txt
 ```
 
+### Sync Timeline Command
+
+Synchronize events across multiple body cameras using UTC watermark timestamps:
+
+```bash
+# Extract timestamps from video watermarks and build synchronized timeline
+third-chair sync-timeline ./my_case --extract-watermarks
+
+# Force re-extraction even if timestamps exist
+third-chair sync-timeline ./my_case --extract-watermarks --force
+
+# Export synchronized timeline to JSON
+third-chair sync-timeline ./my_case --output timeline.json
+```
+
+The synchronized timeline:
+- Extracts UTC timestamps from Axon body camera watermarks using OCR
+- Correlates events across multiple camera views by their synchronized time
+- Shows which cameras were recording at each event's timestamp
+- Provides relative timecodes for each camera (e.g., "Event at 2:15 into Camera A, 0:00 into Camera B")
+
 ### Chat Commands
 
 When using the chat interface (`third-chair chat` or within TUI):
@@ -223,10 +261,72 @@ When using the chat interface (`third-chair chat` or within TUI):
 | `witnesses` | List all witnesses |
 | `case` | Display case information |
 | `timeline` | Display timeline of events |
+| `sync-timeline` | Display synchronized multi-camera timeline |
 | `propositions` | List extracted propositions |
 | `who said <quote>` | Find speaker of a specific quote |
 | `tools` | List all available tools |
 | `help` | Display command help |
+
+### Staging Area
+
+Import multiple Axon ZIP files using a drop-folder workflow:
+
+```bash
+# Create staging directory structure
+mkdir -p staging/incoming
+
+# Drop ZIP files into staging/incoming/
+# Then launch TUI and press 's' to open staging screen
+third-chair tui
+```
+
+Staging workflow:
+1. Drop ZIP files into `staging/incoming/`
+2. Press `s` in TUI to open staging screen
+3. Select a ZIP to preview (file counts, case ID, agency)
+4. Press `Enter` to process selected ZIP
+5. Processed cases move to `cases/` directory
+
+Directory structure:
+```
+staging/
+├── incoming/    # Drop ZIPs here
+├── processing/  # Currently being ingested
+└── failed/      # Failed imports with error logs
+cases/           # Successfully imported cases
+```
+
+### Case Encryption (Vault)
+
+Protect sensitive case data with AES-256 encryption:
+
+```bash
+# Initialize vault on existing case
+third-chair vault-init ./my_case
+
+# Check vault status
+third-chair vault-status ./my_case
+
+# Unlock vault for processing
+third-chair vault-unlock ./my_case
+
+# Lock vault when done
+third-chair vault-lock ./my_case
+
+# Export decrypted copy
+third-chair vault-export ./my_case --output ./export/
+
+# Rotate password
+third-chair vault-rotate ./my_case
+```
+
+Vault features:
+- AES-256-GCM encryption for large files (streaming)
+- Fernet encryption for small files (case.json, config)
+- PBKDF2-HMAC-SHA256 key derivation (480,000 iterations)
+- Session management with configurable timeout
+- Transparent encryption/decryption during processing
+- TUI password dialog integration
 
 ## Configuration
 
@@ -332,19 +432,21 @@ Third Chair is optimized for CPU-only inference:
 
 ```
 third_chair/
+    cli/             # Command-line interface
     config/          # Configuration management
     ingest/          # Evidence intake and classification
+    staging/         # ZIP import staging area
     transcription/   # Audio/video transcription
     translation/     # Language detection and translation
     witnesses/       # Witness management
-    documents/       # Document processing (PDF, DOCX, OCR)
-    summarization/   # AI summaries and timeline
+    documents/       # Document processing (PDF, DOCX, OCR, frame extraction)
+    summarization/   # AI summaries, timeline, multi-camera sync
     analysis/        # Proposition extraction and evaluation
     reports/         # Report generation (DOCX, PDF)
     chat/            # Research assistant tools
     tui/             # Terminal user interface
+    vault/           # Case encryption (AES-256)
     models/          # Data models (Case, Evidence, Transcript, Proposition)
-    cli/             # Command-line interface
     utils/           # Logging, hashing, place names
 ```
 

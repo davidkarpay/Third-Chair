@@ -198,6 +198,8 @@
                 <li><a href="#getting-started">Getting Started</a></li>
                 <li><a href="#processing-cases">Processing a Case</a></li>
                 <li><a href="#using-tui">Using the TUI</a></li>
+                <li><a href="#staging-area">Staging Area</a></li>
+                <li><a href="#vault">Case Encryption</a></li>
                 <li><a href="#chat-commands">Chat Commands</a></li>
                 <li><a href="#vision-analysis">Vision Analysis</a></li>
                 <li><a href="#viewing-guide">Viewing Guide</a></li>
@@ -399,6 +401,10 @@ third-chair tui --search-path /mnt/d/cases</code></pre>
                         <td>Open file (tree) or submit query (chat)</td>
                     </tr>
                     <tr>
+                        <td><span class="keyboard-shortcut">s</span></td>
+                        <td>Open staging screen (import ZIPs)</td>
+                    </tr>
+                    <tr>
                         <td><span class="keyboard-shortcut">Q</span></td>
                         <td>Quit application</td>
                     </tr>
@@ -418,6 +424,141 @@ third-chair tui --search-path /mnt/d/cases</code></pre>
 
                 <h3>Case Selection</h3>
                 <p>When launching without a specific case path, the TUI displays a case selection screen listing all discovered cases. Cases are sorted by modification date (most recent first). Use arrow keys to navigate and Enter to select.</p>
+            </section>
+
+            <section id="staging-area">
+                <h2>Staging Area</h2>
+
+                <p>The staging area provides a drop-folder workflow for importing multiple Axon ZIP files without manual command-line processing.</p>
+
+                <h3>Setting Up Staging</h3>
+                <pre><code># Create staging directory structure
+mkdir -p staging/incoming
+
+# Drop ZIP files into staging/incoming/
+# Then launch TUI and press 's' to open staging screen
+third-chair tui</code></pre>
+
+                <h3>Staging Workflow</h3>
+                <ol>
+                    <li>Drop Axon ZIP files into the <code>staging/incoming/</code> directory</li>
+                    <li>Launch the TUI with <code>third-chair tui</code></li>
+                    <li>Press <span class="keyboard-shortcut">s</span> to open the staging screen</li>
+                    <li>Select a ZIP file to preview (displays file counts, case ID, agency)</li>
+                    <li>Press <span class="keyboard-shortcut">Enter</span> to process the selected ZIP</li>
+                    <li>Successfully processed cases move to the <code>cases/</code> directory</li>
+                </ol>
+
+                <h3>Directory Structure</h3>
+                <pre><code>staging/
+├── incoming/    # Drop ZIPs here for import
+├── processing/  # Currently being ingested
+└── failed/      # Failed imports with error logs
+cases/           # Successfully imported cases</code></pre>
+
+                <h3>ZIP Preview</h3>
+                <p>When selecting a ZIP in the staging screen, Third Chair displays a preview without extracting the entire package:</p>
+                <ul>
+                    <li><strong>Case ID</strong>: Detected from filenames or Table of Contents</li>
+                    <li><strong>Agency</strong>: Originating law enforcement agency</li>
+                    <li><strong>File Counts</strong>: Number of videos, documents, images</li>
+                    <li><strong>Total Size</strong>: Uncompressed package size</li>
+                </ul>
+
+                <div class="note">
+                    <strong>Tip:</strong> Use the staging area to batch import multiple cases. Drop all ZIPs into <code>incoming/</code> and process them one at a time from the TUI.
+                </div>
+            </section>
+
+            <section id="vault">
+                <h2>Case Encryption (Vault)</h2>
+
+                <p>Third Chair includes AES-256 encryption to protect sensitive case data from unauthorized access. Encrypted cases require a master password to unlock before processing or viewing.</p>
+
+                <h3>Initializing Encryption</h3>
+                <p>To encrypt an existing case:</p>
+                <pre><code># Initialize vault on existing case
+third-chair vault-init ./Case-2025-001
+
+# You will be prompted to create a master password</code></pre>
+
+                <div class="warning">
+                    <strong>Important:</strong> Store your vault password securely. There is no password recovery mechanism. If you forget the password, the case data cannot be recovered.
+                </div>
+
+                <h3>Vault Commands</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>vault-init</code></td>
+                        <td>Initialize encryption on a case</td>
+                    </tr>
+                    <tr>
+                        <td><code>vault-unlock</code></td>
+                        <td>Unlock case for processing</td>
+                    </tr>
+                    <tr>
+                        <td><code>vault-lock</code></td>
+                        <td>Lock case when done</td>
+                    </tr>
+                    <tr>
+                        <td><code>vault-status</code></td>
+                        <td>Display encryption status</td>
+                    </tr>
+                    <tr>
+                        <td><code>vault-export</code></td>
+                        <td>Export decrypted copy</td>
+                    </tr>
+                    <tr>
+                        <td><code>vault-rotate</code></td>
+                        <td>Change vault password</td>
+                    </tr>
+                    <tr>
+                        <td><code>vault-verify</code></td>
+                        <td>Verify vault integrity</td>
+                    </tr>
+                </table>
+
+                <h3>Working with Encrypted Cases</h3>
+                <pre><code># Check if a case is encrypted
+third-chair vault-status ./Case-2025-001
+
+# Unlock vault for processing
+third-chair vault-unlock ./Case-2025-001
+
+# Work with the case normally (transcribe, summarize, etc.)
+third-chair summarize ./Case-2025-001
+
+# Lock vault when finished
+third-chair vault-lock ./Case-2025-001</code></pre>
+
+                <h3>Exporting Cases</h3>
+                <p>To create a decrypted copy for sharing or archival:</p>
+                <pre><code># Export decrypted copy to new directory
+third-chair vault-export ./Case-2025-001 --output ./export/Case-2025-001</code></pre>
+
+                <h3>Password Management</h3>
+                <pre><code># Change the vault password
+third-chair vault-rotate ./Case-2025-001
+
+# Verify vault integrity
+third-chair vault-verify ./Case-2025-001</code></pre>
+
+                <h3>Security Features</h3>
+                <ul>
+                    <li><strong>AES-256-GCM</strong>: Military-grade encryption for large media files</li>
+                    <li><strong>Fernet</strong>: Symmetric encryption for small files (case.json, configs)</li>
+                    <li><strong>PBKDF2-HMAC-SHA256</strong>: Key derivation with 480,000 iterations</li>
+                    <li><strong>Session Management</strong>: Configurable timeout for unlocked vaults</li>
+                    <li><strong>TUI Integration</strong>: Password dialog when opening encrypted cases</li>
+                </ul>
+
+                <div class="note">
+                    <strong>Note:</strong> Processing commands (transcribe, translate, summarize) will automatically prompt for the vault password if the case is encrypted and locked.
+                </div>
             </section>
 
             <section id="chat-commands">
@@ -830,8 +971,8 @@ brew install tesseract</code></pre>
 
             <footer style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666;">
                 <p>Third Chair User Guide</p>
-                <p>Version 0.2.0</p>
-                <p>Last updated: January 2025</p>
+                <p>Version 0.2.1</p>
+                <p>Last updated: January 2026</p>
             </footer>
         </main>
     </div>

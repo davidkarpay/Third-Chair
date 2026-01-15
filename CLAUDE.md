@@ -56,13 +56,15 @@ sudo snap restart ollama
 | `models/` | Dataclasses: Case, EvidenceItem, Transcript, Proposition |
 | `ingest/` | ZIP extraction, file classification, ToC parsing |
 | `transcription/` | faster-whisper + pyannote diarization |
-| `translation/` | FastText language detection + Ollama translation |
+| `translation/` | fast-langdetect language detection + Ollama translation |
 | `documents/` | PDF/DOCX/image processing, OCR, frame extraction |
 | `summarization/` | Ollama-powered summaries, timeline builder |
 | `analysis/` | Skanda Framework proposition evaluation |
 | `witnesses/` | Witness import, speaker role detection |
 | `reports/` | DOCX/PDF generation with Bates numbering |
 | `chat/` | Research assistant tools |
+| `staging/` | ZIP import staging with preview and batch processing |
+| `vault/` | AES-256 case encryption, session management |
 
 ### Pipeline Entry Points
 
@@ -158,6 +160,70 @@ HF_TOKEN=  # Required for diarization
 - Processing errors: `evidence.error_message`
 - Low confidence segments: `ReviewFlag.LOW_CONFIDENCE` flag
 - Items needing review: `case.metadata["items_needing_review"]`
+
+## Vault Encryption
+
+Case directories can be encrypted with AES-256 for client confidentiality.
+
+### Key Components
+
+- `vault/crypto.py`: AES-256-GCM and Fernet encryption
+- `vault/session.py`: Session management with timeout
+- `vault/vault_manager.py`: Vault operations (init, lock, unlock)
+- `vault/file_wrapper.py`: Transparent file access (EncryptedPath)
+- `vault/migration.py`: Encrypt existing, export, rotate password
+
+### Usage
+
+```python
+from third_chair.vault import VaultManager, is_vault_encrypted
+
+# Check if encrypted
+if is_vault_encrypted(case_dir):
+    vm = VaultManager(case_dir)
+    vm.unlock(password)
+
+# Encrypt existing case
+from third_chair.vault import encrypt_existing_case
+encrypt_existing_case(case_dir, password)
+```
+
+### CLI Commands
+
+```bash
+third-chair vault-init ./case     # Create encrypted vault
+third-chair vault-unlock ./case   # Unlock for processing
+third-chair vault-lock ./case     # Lock when done
+third-chair vault-status ./case   # Show status
+```
+
+## Staging Area
+
+Drop-folder workflow for batch ZIP imports.
+
+### Key Components
+
+- `staging/preview.py`: Quick ZIP preview without extraction
+- `staging/manager.py`: Staging workflow (incoming → processing → cases)
+- `staging/watcher.py`: Background folder watcher
+
+### Usage
+
+```python
+from third_chair.staging import StagingManager, preview_axon_zip
+
+# Preview ZIP without extracting
+preview = preview_axon_zip(zip_path)
+print(f"Case: {preview.case_id}, Files: {preview.total_files}")
+
+# Process staged ZIP
+manager = StagingManager(staging_dir, cases_dir)
+manager.process_zip(zip_path)
+```
+
+### TUI Integration
+
+Press `s` in TUI to open staging screen.
 
 ## Skanda Framework (Legal Proposition Evaluation)
 
