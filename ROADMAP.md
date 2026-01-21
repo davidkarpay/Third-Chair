@@ -23,9 +23,12 @@ Features identified as critical for comprehensive legal discovery support.
 - [x] Write unit tests (28 tests passing)
 
 ### Cross-Statement Discrepancy Detection
-- [ ] Design proposition conflict detection in Skanda framework
+- [x] Design proposition conflict detection in Skanda framework
+- [x] Implement Evidence Workbench for fact extraction
+- [x] Create embedding pipeline for semantic similarity
+- [x] Build inconsistency detection using LLM analysis
+- [x] Add timeline conflict detection
 - [ ] Identify key claim categories (who initiated, physical contact, weapon use)
-- [ ] Implement cross-evidence comparison
 - [ ] Add discrepancy flagging to reports
 
 ---
@@ -125,6 +128,8 @@ Core functionality already implemented in Third Chair.
 - [x] **Vision Analysis** - Ollama vision model for evidence photos
 - [x] **Miranda Warning Detection** - Pattern-based detection of Miranda readings, waivers, and invocations
 - [x] **Case Encryption (Vault)** - AES-256 encryption with master password protection
+- [x] **Evidence Workbench** - LLM-based fact extraction, embedding, and inconsistency detection
+- [x] **Work Item Management** - Attorney task tracking (investigations, actions, objectives)
 
 ---
 
@@ -134,7 +139,8 @@ Core functionality already implemented in Third Chair.
 |---------|------|-----------------|
 | 0.1.0 | 2025 | Initial release with core pipeline |
 | 0.2.0 | 2025-01 | Miranda detection, case encryption vault |
-| 0.3.0 | TBD | Discrepancy analysis, GUI application |
+| 0.3.0 | 2026-01 | Evidence Workbench, work item management |
+| 0.4.0 | TBD | GUI application, enhanced discrepancy analysis |
 
 ---
 

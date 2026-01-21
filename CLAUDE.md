@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Third Chair is a legal discovery processing tool for Axon body-worn camera evidence packages. It transcribes audio/video, detects and translates Spanish content, manages witnesses, and generates attorney-ready reports with Bates numbering.
 
+**Target Users**: Criminal defense attorneys processing body-worn camera evidence.
+
+**Key Capabilities**:
+- Axon ZIP ingestion and file classification
+- CPU-optimized transcription (faster-whisper) with speaker diarization
+- Spanish/English translation via local Ollama
+- Evidence workbench for inconsistency detection
+- Skanda Framework for legal proposition evaluation
+- Case encryption (AES-256 vault)
+- Attorney reports with Bates numbering
+
 ## Build & Development Commands
 
 ```bash
@@ -35,8 +46,9 @@ sudo apt-get install tesseract-ocr ffmpeg
 
 ```bash
 # Required models
-ollama pull aya-expanse:8b   # Translation
-ollama pull mistral:7b       # Summarization
+ollama pull aya-expanse:8b     # Translation
+ollama pull mistral:7b         # Summarization, extraction
+ollama pull nomic-embed-text   # Embeddings (workbench)
 
 # Unload idle models (prevents CPU thrashing)
 curl http://localhost:11434/api/generate -d '{"model": "MODEL_NAME", "keep_alive": 0}'
@@ -65,6 +77,10 @@ sudo snap restart ollama
 | `chat/` | Research assistant tools |
 | `staging/` | ZIP import staging with preview and batch processing |
 | `vault/` | AES-256 case encryption, session management |
+| `work/` | Work item management (investigations, actions, objectives) |
+| `workbench/` | Evidence extraction, embedding, inconsistency detection |
+| `config/` | Settings and configuration |
+| `utils/` | Logging, hashing, place names |
 
 ### Pipeline Entry Points
 
@@ -75,17 +91,65 @@ from third_chair.ingest import ingest_axon_package
 from third_chair.transcription import transcribe_case
 from third_chair.translation import translate_case
 from third_chair.summarization import summarize_case_evidence
+from third_chair.workbench import init_workbench, get_workbench_db
+from third_chair.workbench.extraction import extract_from_case
+from third_chair.workbench.embedding import embed_extractions
+from third_chair.workbench.detection import detect_connections
 ```
 
 CLI commands use lazy imports (import at function level) to speed startup.
 
 ## Core Data Models (third_chair/models/)
 
+All models use `@dataclass` with `to_dict()` / `from_dict()` for JSON serialization.
+
 **Case** (`case.py`): Central container with `evidence_items`, `witnesses`, `timeline`, `propositions`. Serializes to `case.json` via `case.save()`.
 
 **EvidenceItem** (`evidence.py`): Individual file with `file_type` (VIDEO/AUDIO/DOCUMENT/IMAGE), `content_type` (BWC_FOOTAGE/CAD_LOG/etc), `transcript`, `processing_status`.
 
 **Transcript** (`transcript.py`): Contains `segments` (TranscriptSegment list), `speakers` mapping (SPEAKER_1 → name), `key_statements`.
+
+**TranscriptSegment**: Single utterance with `start_time`, `end_time`, `speaker`, `text`, `language`, `translation`, `review_flags`, `speaker_role`.
+
+### Model Patterns
+
+```python
+from dataclasses import dataclass, field
+from typing import Any, Optional
+from enum import Enum
+
+class MyType(str, Enum):
+    """Always use str, Enum for JSON-serializable enums."""
+    VALUE_A = "value_a"
+    VALUE_B = "value_b"
+
+@dataclass
+class MyModel:
+    """Standard dataclass pattern."""
+    id: str
+    name: str
+    optional_field: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "optional_field": self.optional_field,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MyModel":
+        """Create from dictionary."""
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            optional_field=data.get("optional_field"),
+            metadata=data.get("metadata", {}),
+        )
+```
 
 ## Key CLI Commands
 
@@ -103,6 +167,24 @@ third-chair report ./my_case --format all --bates-prefix DEF
 # Interactive
 third-chair tui                    # TUI with case selection
 third-chair chat ./my_case         # Research assistant
+
+# Evidence Workbench
+third-chair workbench init ./my_case
+third-chair workbench extract ./my_case
+third-chair workbench embed ./my_case
+third-chair workbench detect ./my_case
+third-chair workbench connections ./my_case
+third-chair workbench status ./my_case
+
+# Work Items
+third-chair work list ./my_case
+third-chair work add ./my_case --title "Review BWC footage" --type action
+third-chair work update ./my_case INV-0001 --status completed
+
+# Vault
+third-chair vault-init ./case
+third-chair vault-unlock ./case
+third-chair vault-lock ./case
 ```
 
 ## Hardware Constraints
@@ -121,6 +203,41 @@ CPU-only inference environment (Intel UHD 630 iGPU, no CUDA):
 ### Adding a new CLI command
 1. Add function with `@app.command()` in `third_chair/cli/main.py`
 2. Import any needed modules at function level (for lazy loading)
+3. Use `console.print()` from Rich for output
+
+Example:
+```python
+@app.command()
+def my_command(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    option: str = typer.Option("default", "--option", "-o", help="Description"),
+):
+    """Command docstring shown in help."""
+    # Lazy import at function level
+    from ..my_module import my_function
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    # ... implementation
+    console.print("[green]Success![/green]")
+```
+
+### Adding a CLI subcommand group
+```python
+my_app = typer.Typer(
+    name="mygroup",
+    help="Description of the command group.",
+    no_args_is_help=True,
+)
+app.add_typer(my_app, name="mygroup")
+
+@my_app.command("subcommand")
+def my_subcommand(...):
+    """Subcommand docstring."""
+    ...
+```
 
 ### Modifying translation prompts
 Edit `_build_translation_prompt()` in `third_chair/translation/ollama_translator.py`
@@ -140,7 +257,8 @@ Edit system prompts in `third_chair/summarization/ollama_client.py`
 3. **Translate**: Transcript → Language detect → Ollama translate → Updated segments
 4. **Documents**: PDF/DOCX/Image → Extract/OCR → Summary text
 5. **Summarize**: Case → Transcript summaries → Timeline → Case summary
-6. **Report**: Case → Evidence inventory → Witness list → DOCX/PDF report
+6. **Workbench**: Transcripts → Extract facts → Embed → Detect inconsistencies
+7. **Report**: Case → Evidence inventory → Witness list → DOCX/PDF report
 
 ## Configuration
 
@@ -160,6 +278,110 @@ HF_TOKEN=  # Required for diarization
 - Processing errors: `evidence.error_message`
 - Low confidence segments: `ReviewFlag.LOW_CONFIDENCE` flag
 - Items needing review: `case.metadata["items_needing_review"]`
+
+## Evidence Workbench
+
+The workbench module extracts granular facts from transcripts and detects inconsistencies between evidence items.
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `workbench/models.py` | `Extraction`, `SuggestedConnection` dataclasses |
+| `workbench/database.py` | SQLite operations (`workbench.db`) |
+| `workbench/extraction/` | LLM-based fact extraction from segments |
+| `workbench/embedding/` | Vector embeddings via Ollama |
+| `workbench/detection/` | Inconsistency and timeline conflict detection |
+
+### Database Schema
+
+```sql
+-- Extractions: granular facts
+CREATE TABLE extractions (
+    id TEXT PRIMARY KEY,
+    evidence_id TEXT NOT NULL,
+    extraction_type TEXT NOT NULL,  -- statement, event, entity_mention, action
+    content TEXT NOT NULL,
+    speaker TEXT,
+    start_time REAL,
+    confidence REAL
+);
+
+-- Embeddings: vector storage
+CREATE TABLE embeddings (
+    extraction_id TEXT REFERENCES extractions(id),
+    vector BLOB NOT NULL,
+    model TEXT
+);
+
+-- Suggested connections
+CREATE TABLE suggested_connections (
+    id TEXT PRIMARY KEY,
+    extraction_a_id TEXT REFERENCES extractions(id),
+    extraction_b_id TEXT REFERENCES extractions(id),
+    connection_type TEXT,  -- inconsistent_statement, temporal_conflict, corroborates
+    confidence REAL,
+    reasoning TEXT,
+    severity TEXT,  -- minor, moderate, major, critical
+    status TEXT DEFAULT 'pending'
+);
+```
+
+### Usage
+
+```python
+from third_chair.workbench import init_workbench, get_workbench_db
+from third_chair.workbench.extraction import extract_from_case
+from third_chair.workbench.embedding import embed_extractions
+from third_chair.workbench.detection import detect_connections
+
+# Initialize
+db = init_workbench(case_dir)
+
+# Extract facts from transcripts
+extract_from_case(case_dir, model="mistral:7b")
+
+# Generate embeddings
+embed_extractions(case_dir, model="nomic-embed-text")
+
+# Detect inconsistencies
+results = detect_connections(case_dir, types=["inconsistency", "timeline"])
+```
+
+## Work Items
+
+The work module manages attorney tasks and investigations.
+
+### Work Item Types
+- `investigation` - Research tasks
+- `legal_question` - Legal research questions
+- `objective` - Case objectives
+- `action` - Specific tasks
+- `fact` - Facts to establish
+
+### Storage
+Work items are stored as YAML files in `case_dir/work/`:
+```
+work/
+├── _index.yaml      # Index with metadata
+├── INV-0001.yaml    # Individual items
+├── ACT-0001.yaml
+└── ...
+```
+
+### Usage
+
+```python
+from third_chair.work import WorkStorage, WorkItemType
+
+storage = WorkStorage(case_dir)
+item = storage.create_item(
+    item_type=WorkItemType.ACTION,
+    title="Review BWC footage",
+    description="Look for exculpatory statements",
+    priority="high",
+)
+```
 
 ## Vault Encryption
 
@@ -188,43 +410,6 @@ from third_chair.vault import encrypt_existing_case
 encrypt_existing_case(case_dir, password)
 ```
 
-### CLI Commands
-
-```bash
-third-chair vault-init ./case     # Create encrypted vault
-third-chair vault-unlock ./case   # Unlock for processing
-third-chair vault-lock ./case     # Lock when done
-third-chair vault-status ./case   # Show status
-```
-
-## Staging Area
-
-Drop-folder workflow for batch ZIP imports.
-
-### Key Components
-
-- `staging/preview.py`: Quick ZIP preview without extraction
-- `staging/manager.py`: Staging workflow (incoming → processing → cases)
-- `staging/watcher.py`: Background folder watcher
-
-### Usage
-
-```python
-from third_chair.staging import StagingManager, preview_axon_zip
-
-# Preview ZIP without extracting
-preview = preview_axon_zip(zip_path)
-print(f"Case: {preview.case_id}, Files: {preview.total_files}")
-
-# Process staged ZIP
-manager = StagingManager(staging_dir, cases_dir)
-manager.process_zip(zip_path)
-```
-
-### TUI Integration
-
-Press `s` in TUI to open staging screen.
-
 ## Skanda Framework (Legal Proposition Evaluation)
 
 The Skanda Framework treats "fact" as an earned output label, not a stored boolean. See `models/proposition.py` for full model definitions.
@@ -251,3 +436,59 @@ propositions = extract_propositions_from_case(case)
 case.propositions = propositions
 evaluate_all_propositions(case)
 ```
+
+## Staging Area
+
+Drop-folder workflow for batch ZIP imports.
+
+### Key Components
+
+- `staging/preview.py`: Quick ZIP preview without extraction
+- `staging/manager.py`: Staging workflow (incoming → processing → cases)
+- `staging/watcher.py`: Background folder watcher
+
+### TUI Integration
+
+Press `s` in TUI to open staging screen.
+
+## Testing Patterns
+
+```python
+import pytest
+from pathlib import Path
+from third_chair.models import Case, EvidenceItem
+
+def test_my_feature(tmp_path: Path):
+    """Use tmp_path fixture for temporary directories."""
+    case = Case(case_id="test-001", output_dir=tmp_path)
+    # ... test implementation
+
+@pytest.fixture
+def sample_case(tmp_path: Path) -> Case:
+    """Fixture for common test setup."""
+    case = Case(case_id="test-001", output_dir=tmp_path)
+    case.save()
+    return case
+```
+
+## Code Style
+
+- Use type hints everywhere
+- Prefer `Path` over `str` for file paths
+- Use `@dataclass` for data containers
+- Use `Enum(str, Enum)` for string enums
+- Lazy imports in CLI functions
+- Rich console for CLI output
+- httpx for HTTP clients (not requests)
+
+## Dependencies
+
+Key dependencies from `pyproject.toml`:
+- `typer` - CLI framework
+- `rich` - Console formatting
+- `textual` - TUI framework
+- `faster-whisper` - Transcription
+- `httpx` - Ollama API client
+- `pdfplumber` - PDF parsing
+- `python-docx` - DOCX generation
+- `numpy` - Vector operations (workbench)

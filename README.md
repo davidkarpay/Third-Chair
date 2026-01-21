@@ -127,6 +127,17 @@ third-chair chat ./my_case --query "search knife"
 | `vault-export` | Export decrypted copy of case |
 | `vault-rotate` | Change vault password |
 | `vault-verify` | Verify vault integrity |
+| `workbench init` | Initialize Evidence Workbench for a case |
+| `workbench extract` | Extract facts from transcripts using LLM |
+| `workbench embed` | Generate vector embeddings for extractions |
+| `workbench detect` | Detect inconsistencies and timeline conflicts |
+| `workbench connections` | View detected connections |
+| `workbench status` | Show workbench statistics |
+| `work list` | List work items for a case |
+| `work add` | Add a new work item |
+| `work update` | Update work item status |
+| `work status` | Show work item summary |
+| `work smart` | Create work item from natural language |
 
 ### TUI Command
 
@@ -327,6 +338,73 @@ Vault features:
 - Session management with configurable timeout
 - Transparent encryption/decryption during processing
 - TUI password dialog integration
+
+### Evidence Workbench
+
+Analyze transcripts to extract facts and detect inconsistencies between evidence items:
+
+```bash
+# Initialize workbench database for a case
+third-chair workbench init ./my_case
+
+# Extract facts from transcripts (statements, events, entities, actions)
+third-chair workbench extract ./my_case --model mistral:7b
+
+# Generate vector embeddings for semantic similarity
+third-chair workbench embed ./my_case --model nomic-embed-text
+
+# Detect inconsistencies and timeline conflicts
+third-chair workbench detect ./my_case --types inconsistency,timeline
+
+# View detected connections
+third-chair workbench connections ./my_case --type inconsistent_statement --status pending
+
+# Show workbench statistics
+third-chair workbench status ./my_case
+```
+
+Workbench features:
+- LLM-based extraction of statements, events, entity mentions, and actions
+- Vector embeddings for semantic similarity search
+- Automatic detection of contradictions between witnesses
+- Timeline conflict detection for impossible event sequences
+- Severity classification (minor, moderate, major, critical)
+- SQLite storage (workbench.db) for efficient querying
+
+### Work Item Management
+
+Track investigations, legal questions, and tasks for a case:
+
+```bash
+# List all work items
+third-chair work list ./my_case
+
+# Filter by status or type
+third-chair work list ./my_case --status pending --type investigation
+
+# Add a new work item
+third-chair work add ./my_case \
+    --title "Review BWC footage for exculpatory statements" \
+    --type action \
+    --priority high \
+    --assigned "Jane Doe"
+
+# Update work item status
+third-chair work update ./my_case INV-0001 --status completed --note "Found key statement at 2:15"
+
+# Show work summary
+third-chair work status ./my_case
+
+# Create work item from natural language
+third-chair work smart ./my_case "Need to investigate the timeline discrepancy between officer and witness"
+```
+
+Work item types:
+- `investigation` - Research tasks requiring deeper analysis
+- `legal_question` - Legal research questions for the attorney
+- `objective` - Case objectives to achieve
+- `action` - Specific tasks to complete
+- `fact` - Facts to establish or verify
 
 ## Configuration
 
