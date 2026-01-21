@@ -2563,6 +2563,301 @@ def work_create(
         console.print(f"  Description: {item.description[:100]}...")
 
 
+# =============================================================================
+# Evidence Workbench Commands
+# =============================================================================
+
+workbench_app = typer.Typer(
+    name="workbench",
+    help="Evidence Workbench - extraction, embedding, and connection detection for legal evidence.",
+    no_args_is_help=True,
+)
+app.add_typer(workbench_app, name="workbench")
+
+
+@workbench_app.command("init")
+def workbench_init(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+):
+    """Initialize the Evidence Workbench for a case.
+
+    Creates the workbench.db SQLite database with the required schema.
+    """
+    from ..workbench import init_workbench
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    case_json = case_dir / "case.json"
+    if not case_json.exists():
+        console.print(f"[red]Error: case.json not found in {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    db = init_workbench(case_dir)
+    db.close()
+
+    console.print(f"[green]Workbench initialized:[/green] {case_dir / 'workbench.db'}")
+
+
+@workbench_app.command("extract")
+def workbench_extract(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    model: str = typer.Option(
+        "mistral:7b",
+        "--model", "-m",
+        help="Ollama model for extraction",
+    ),
+):
+    """Extract facts from transcripts using LLM.
+
+    Processes all evidence items with transcripts and extracts:
+    - Statements (direct quotes and claims)
+    - Events (actions and occurrences)
+    - Entity mentions (people, places, times)
+    - Actions (physical actions described)
+    """
+    from ..workbench.extraction import extract_from_case
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Evidence Workbench - Extraction[/bold]\n")
+    console.print(f"Case directory: {case_dir}")
+    console.print(f"Model: {model}\n")
+
+    try:
+        count = extract_from_case(case_dir, model=model, show_progress=True)
+        console.print(f"\n[green]Extraction complete![/green] Created {count} extractions")
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+    except RuntimeError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@workbench_app.command("embed")
+def workbench_embed(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    model: str = typer.Option(
+        "nomic-embed-text",
+        "--model", "-m",
+        help="Ollama embedding model",
+    ),
+):
+    """Generate embeddings for extracted facts.
+
+    Creates vector embeddings for semantic similarity search.
+    Required before running detection.
+    """
+    from ..workbench.embedding import embed_extractions
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Evidence Workbench - Embedding[/bold]\n")
+    console.print(f"Case directory: {case_dir}")
+    console.print(f"Model: {model}\n")
+
+    try:
+        count = embed_extractions(case_dir, model=model, show_progress=True)
+        console.print(f"\n[green]Embedding complete![/green] Created {count} embeddings")
+    except RuntimeError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@workbench_app.command("detect")
+def workbench_detect(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    types: str = typer.Option(
+        "inconsistency,timeline",
+        "--types", "-t",
+        help="Detection types (comma-separated): inconsistency, timeline",
+    ),
+    model: str = typer.Option(
+        "mistral:7b",
+        "--model", "-m",
+        help="Ollama model for detection",
+    ),
+):
+    """Detect connections between extracted facts.
+
+    Analyzes extractions to find:
+    - Inconsistent statements (contradictions between sources)
+    - Timeline conflicts (temporal impossibilities)
+    - Corroborating statements (supporting evidence)
+    """
+    from ..workbench.detection import detect_connections
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    type_list = [t.strip() for t in types.split(",")]
+
+    console.print(f"\n[bold]Evidence Workbench - Detection[/bold]\n")
+    console.print(f"Case directory: {case_dir}")
+    console.print(f"Detection types: {', '.join(type_list)}")
+    console.print(f"Model: {model}\n")
+
+    try:
+        results = detect_connections(
+            case_dir,
+            types=type_list,
+            model=model,
+            show_progress=True,
+        )
+
+        console.print(f"\n[green]Detection complete![/green]")
+        for det_type, count in results.items():
+            console.print(f"  {det_type}: {count} connections found")
+
+    except RuntimeError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@workbench_app.command("connections")
+def workbench_connections(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+    connection_type: Optional[str] = typer.Option(
+        None,
+        "--type", "-t",
+        help="Filter by type: inconsistent_statement, temporal_conflict, corroborates",
+    ),
+    status: str = typer.Option(
+        "pending",
+        "--status", "-s",
+        help="Filter by status: pending, confirmed, rejected",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit", "-n",
+        help="Maximum connections to show",
+    ),
+):
+    """View detected connections.
+
+    Shows inconsistencies, timeline conflicts, and corroborating
+    statements found during detection.
+    """
+    from ..workbench import get_workbench_db, ConnectionType, ConnectionStatus
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    db = get_workbench_db(case_dir)
+    if not db.is_initialized():
+        console.print(f"[red]Workbench not initialized. Run 'workbench init' first.[/red]")
+        raise typer.Exit(1)
+
+    # Parse filters
+    conn_type = None
+    if connection_type:
+        try:
+            conn_type = ConnectionType(connection_type)
+        except ValueError:
+            console.print(f"[red]Invalid type: {connection_type}[/red]")
+            console.print("Valid types: inconsistent_statement, temporal_conflict, corroborates, contradicts")
+            raise typer.Exit(1)
+
+    try:
+        status_filter = ConnectionStatus(status)
+    except ValueError:
+        console.print(f"[red]Invalid status: {status}[/red]")
+        console.print("Valid statuses: pending, confirmed, rejected")
+        raise typer.Exit(1)
+
+    connections = db.get_connections(
+        connection_type=conn_type,
+        status=status_filter,
+        limit=limit,
+    )
+
+    if not connections:
+        console.print("[yellow]No connections found matching filters.[/yellow]")
+        db.close()
+        return
+
+    # Build table
+    table = Table(title=f"Connections ({len(connections)})")
+    table.add_column("Type", style="cyan")
+    table.add_column("Severity")
+    table.add_column("Confidence", justify="right")
+    table.add_column("Reasoning", max_width=50)
+    table.add_column("Status")
+
+    severity_colors = {
+        "minor": "dim",
+        "moderate": "yellow",
+        "major": "red",
+        "critical": "red bold",
+    }
+
+    for conn in connections:
+        severity_str = conn.severity.value if conn.severity else "-"
+        severity_style = severity_colors.get(severity_str, "")
+
+        table.add_row(
+            conn.connection_type.value,
+            f"[{severity_style}]{severity_str}[/{severity_style}]" if severity_str != "-" else "-",
+            f"{conn.confidence:.2f}",
+            conn.reasoning[:50] + "..." if len(conn.reasoning) > 50 else conn.reasoning,
+            conn.status.value,
+        )
+
+    console.print(table)
+    db.close()
+
+
+@workbench_app.command("status")
+def workbench_status(
+    case_dir: Path = typer.Argument(..., help="Path to case directory"),
+):
+    """Show workbench status for a case.
+
+    Displays counts of extractions, embeddings, and connections.
+    """
+    from ..workbench import get_workbench_db
+
+    if not case_dir.exists():
+        console.print(f"[red]Error: Case directory not found: {case_dir}[/red]")
+        raise typer.Exit(1)
+
+    db = get_workbench_db(case_dir)
+
+    if not db.is_initialized():
+        console.print(f"[yellow]Workbench not initialized for this case.[/yellow]")
+        console.print(f"Run: third-chair workbench init {case_dir}")
+        db.close()
+        return
+
+    stats = db.get_stats()
+
+    console.print(f"\n[bold]Evidence Workbench Status[/bold]")
+    console.print(f"Case: {case_dir}\n")
+
+    console.print(f"[bold]Data:[/bold]")
+    console.print(f"  Extractions: {stats['extractions']}")
+    console.print(f"  Embeddings: {stats['embeddings']}")
+
+    console.print(f"\n[bold]Connections:[/bold]")
+    console.print(f"  Total: {stats['connections_total']}")
+    console.print(f"  Pending: {stats['connections_pending']}")
+    console.print(f"  Confirmed: {stats['connections_confirmed']}")
+
+    console.print(f"\n[bold]By Type:[/bold]")
+    for conn_type, count in stats['connections_by_type'].items():
+        console.print(f"  {conn_type}: {count}")
+
+    db.close()
+
+
 @app.command()
 def version():
     """Show version information."""
