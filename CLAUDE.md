@@ -10,8 +10,9 @@ Third Chair is a legal discovery processing tool for Axon body-worn camera evide
 
 **Key Capabilities**:
 - Axon ZIP ingestion and file classification
-- CPU-optimized transcription (faster-whisper) with speaker diarization
+- GPU-accelerated transcription (faster-whisper) with speaker diarization
 - Spanish/English translation via local Ollama
+- Multi-camera timeline synchronization via OCR watermark extraction
 - Evidence workbench for inconsistency detection
 - Skanda Framework for legal proposition evaluation
 - Case encryption (AES-256 vault)
@@ -50,11 +51,11 @@ ollama pull aya-expanse:8b     # Translation
 ollama pull mistral:7b         # Summarization, extraction
 ollama pull nomic-embed-text   # Embeddings (workbench)
 
-# Unload idle models (prevents CPU thrashing)
+# Unload idle models (frees VRAM/RAM)
 curl http://localhost:11434/api/generate -d '{"model": "MODEL_NAME", "keep_alive": 0}'
 
 # Restart if slow (stuck model runners)
-sudo snap restart ollama
+sudo systemctl restart ollama
 ```
 
 ## Architecture
@@ -69,15 +70,15 @@ sudo snap restart ollama
 | `ingest/` | ZIP extraction, file classification, ToC parsing |
 | `transcription/` | faster-whisper + pyannote diarization |
 | `translation/` | fast-langdetect language detection + Ollama translation |
-| `documents/` | PDF/DOCX/image processing, OCR, frame extraction |
-| `summarization/` | Ollama-powered summaries, timeline builder |
+| `documents/` | PDF/DOCX/image processing, OCR, frame/watermark extraction |
+| `summarization/` | Ollama summaries, timeline builder, multi-camera sync |
 | `analysis/` | Skanda Framework proposition evaluation |
 | `witnesses/` | Witness import, speaker role detection |
 | `reports/` | DOCX/PDF generation with Bates numbering |
 | `chat/` | Research assistant tools |
 | `staging/` | ZIP import staging with preview and batch processing |
 | `vault/` | AES-256 case encryption, session management |
-| `work/` | Work item management (investigations, actions, objectives) |
+| `work/` | Work item management with AI assistant |
 | `workbench/` | Evidence extraction, embedding, inconsistency detection |
 | `config/` | Settings and configuration |
 | `utils/` | Logging, hashing, place names |
@@ -95,6 +96,7 @@ from third_chair.workbench import init_workbench, get_workbench_db
 from third_chair.workbench.extraction import extract_from_case
 from third_chair.workbench.embedding import embed_extractions
 from third_chair.workbench.detection import detect_connections
+from third_chair.work import WorkStorage, create_work_item_from_text
 ```
 
 CLI commands use lazy imports (import at function level) to speed startup.
@@ -187,12 +189,13 @@ third-chair vault-unlock ./case
 third-chair vault-lock ./case
 ```
 
-## Hardware Constraints
+## Hardware Profile
 
-CPU-only inference environment (Intel UHD 630 iGPU, no CUDA):
-- Ollama: Run ONE model at a time to avoid CPU thrashing (1800%+ CPU usage)
-- Whisper: Uses int8 compute type for CPU optimization
-- Typical Ollama response: ~2s when healthy, 30s+ when multiple models compete
+Development environment: Windows 11 + WSL2, NVIDIA RTX A4500 (20GB VRAM, CUDA 13.0).
+
+- **Ollama**: GPU-accelerated inference; typical response ~1-2s
+- **Whisper**: CUDA-accelerated transcription
+- **Multiple models**: 20GB VRAM supports concurrent models, but unload idle ones to free memory
 
 ## Common Tasks
 
@@ -256,9 +259,10 @@ Edit system prompts in `third_chair/summarization/ollama_client.py`
 2. **Transcribe**: Media → FFmpeg normalize → Whisper → Diarize → Transcript
 3. **Translate**: Transcript → Language detect → Ollama translate → Updated segments
 4. **Documents**: PDF/DOCX/Image → Extract/OCR → Summary text
-5. **Summarize**: Case → Transcript summaries → Timeline → Case summary
-6. **Workbench**: Transcripts → Extract facts → Embed → Detect inconsistencies
-7. **Report**: Case → Evidence inventory → Witness list → DOCX/PDF report
+5. **Sync Timeline**: Videos → Frame extraction → Watermark OCR → UTC timestamps → Multi-camera timeline
+6. **Summarize**: Case → Transcript summaries → Timeline → Case summary
+7. **Workbench**: Transcripts → Extract facts → Embed → Detect inconsistencies
+8. **Report**: Case → Evidence inventory → Witness list → DOCX/PDF report
 
 ## Configuration
 
@@ -281,53 +285,9 @@ HF_TOKEN=  # Required for diarization
 
 ## Evidence Workbench
 
-The workbench module extracts granular facts from transcripts and detects inconsistencies between evidence items.
+The workbench module extracts granular facts from transcripts and detects inconsistencies between evidence items. Data stored in SQLite (`workbench.db`).
 
-### Components
-
-| Component | Purpose |
-|-----------|---------|
-| `workbench/models.py` | `Extraction`, `SuggestedConnection` dataclasses |
-| `workbench/database.py` | SQLite operations (`workbench.db`) |
-| `workbench/extraction/` | LLM-based fact extraction from segments |
-| `workbench/embedding/` | Vector embeddings via Ollama |
-| `workbench/detection/` | Inconsistency and timeline conflict detection |
-
-### Database Schema
-
-```sql
--- Extractions: granular facts
-CREATE TABLE extractions (
-    id TEXT PRIMARY KEY,
-    evidence_id TEXT NOT NULL,
-    extraction_type TEXT NOT NULL,  -- statement, event, entity_mention, action
-    content TEXT NOT NULL,
-    speaker TEXT,
-    start_time REAL,
-    confidence REAL
-);
-
--- Embeddings: vector storage
-CREATE TABLE embeddings (
-    extraction_id TEXT REFERENCES extractions(id),
-    vector BLOB NOT NULL,
-    model TEXT
-);
-
--- Suggested connections
-CREATE TABLE suggested_connections (
-    id TEXT PRIMARY KEY,
-    extraction_a_id TEXT REFERENCES extractions(id),
-    extraction_b_id TEXT REFERENCES extractions(id),
-    connection_type TEXT,  -- inconsistent_statement, temporal_conflict, corroborates
-    confidence REAL,
-    reasoning TEXT,
-    severity TEXT,  -- minor, moderate, major, critical
-    status TEXT DEFAULT 'pending'
-);
-```
-
-### Usage
+### Key Functions
 
 ```python
 from third_chair.workbench import init_workbench, get_workbench_db
@@ -335,44 +295,38 @@ from third_chair.workbench.extraction import extract_from_case
 from third_chair.workbench.embedding import embed_extractions
 from third_chair.workbench.detection import detect_connections
 
-# Initialize
 db = init_workbench(case_dir)
-
-# Extract facts from transcripts
 extract_from_case(case_dir, model="mistral:7b")
-
-# Generate embeddings
 embed_extractions(case_dir, model="nomic-embed-text")
-
-# Detect inconsistencies
 results = detect_connections(case_dir, types=["inconsistency", "timeline"])
 ```
 
+### Extraction Types
+- `statement` - Verbal claims by witnesses
+- `event` - Actions or occurrences
+- `entity_mention` - People, places, objects
+- `action` - Physical actions taken
+
+### Connection Types
+- `inconsistent_statement` - Contradictions between witnesses
+- `temporal_conflict` - Impossible event sequences
+- `corroborates` - Supporting evidence
+
 ## Work Items
 
-The work module manages attorney tasks and investigations.
+The work module manages attorney tasks and investigations. Stored as YAML files in `case_dir/work/` for easy human editing and git tracking.
 
 ### Work Item Types
-- `investigation` - Research tasks
-- `legal_question` - Legal research questions
-- `objective` - Case objectives
-- `action` - Specific tasks
-- `fact` - Facts to establish
-
-### Storage
-Work items are stored as YAML files in `case_dir/work/`:
-```
-work/
-├── _index.yaml      # Index with metadata
-├── INV-0001.yaml    # Individual items
-├── ACT-0001.yaml
-└── ...
-```
+- `investigation` (INV-####) - Research tasks
+- `legal_question` (LEG-####) - Legal research questions
+- `objective` (OBJ-####) - Case objectives
+- `action` (ACT-####) - Specific tasks
+- `fact` (FCT-####) - Facts to establish
 
 ### Usage
 
 ```python
-from third_chair.work import WorkStorage, WorkItemType
+from third_chair.work import WorkStorage, WorkItemType, create_work_item_from_text
 
 storage = WorkStorage(case_dir)
 item = storage.create_item(
@@ -381,33 +335,37 @@ item = storage.create_item(
     description="Look for exculpatory statements",
     priority="high",
 )
+
+# AI-assisted creation from natural language
+item = create_work_item_from_text(
+    case_dir,
+    "Need to investigate timeline discrepancy between officer and witness"
+)
 ```
 
 ## Vault Encryption
 
 Case directories can be encrypted with AES-256 for client confidentiality.
 
-### Key Components
-
-- `vault/crypto.py`: AES-256-GCM and Fernet encryption
-- `vault/session.py`: Session management with timeout
-- `vault/vault_manager.py`: Vault operations (init, lock, unlock)
-- `vault/file_wrapper.py`: Transparent file access (EncryptedPath)
-- `vault/migration.py`: Encrypt existing, export, rotate password
-
 ### Usage
 
 ```python
-from third_chair.vault import VaultManager, is_vault_encrypted
+from third_chair.vault import VaultManager, is_vault_encrypted, encrypt_existing_case
 
-# Check if encrypted
 if is_vault_encrypted(case_dir):
     vm = VaultManager(case_dir)
     vm.unlock(password)
 
 # Encrypt existing case
-from third_chair.vault import encrypt_existing_case
 encrypt_existing_case(case_dir, password)
+```
+
+### CLI
+```bash
+third-chair vault-init ./case      # Initialize encryption
+third-chair vault-unlock ./case    # Unlock for processing
+third-chair vault-lock ./case      # Lock when done
+third-chair vault-rotate ./case    # Change password
 ```
 
 ## Skanda Framework (Legal Proposition Evaluation)
@@ -435,6 +393,36 @@ from third_chair.analysis import extract_propositions_from_case, evaluate_all_pr
 propositions = extract_propositions_from_case(case)
 case.propositions = propositions
 evaluate_all_propositions(case)
+```
+
+## Multi-Camera Timeline Synchronization
+
+Correlates events across multiple body cameras using UTC watermark timestamps.
+
+### Components
+
+- `documents/frame_extractor.py`: FFmpeg-based frame extraction from videos
+- `documents/watermark_reader.py`: OCR extraction of Axon UTC watermarks
+- `summarization/multi_camera_timeline.py`: Timeline correlation and formatting
+
+### Usage
+
+```python
+from third_chair.documents.watermark_reader import extract_watermark_timestamp
+from third_chair.summarization.multi_camera_timeline import build_multi_camera_timeline
+
+# Extract timestamp from video watermark
+watermark = extract_watermark_timestamp(video_path)
+print(f"UTC: {watermark.utc_timestamp}, Camera: {watermark.camera_model}")
+
+# Build synchronized timeline
+timeline = build_multi_camera_timeline(case)
+# Returns: which cameras were recording at each event's timestamp
+```
+
+### CLI
+```bash
+third-chair sync-timeline ./my_case --extract-watermarks
 ```
 
 ## Staging Area
@@ -473,22 +461,10 @@ def sample_case(tmp_path: Path) -> Case:
 
 ## Code Style
 
-- Use type hints everywhere
-- Prefer `Path` over `str` for file paths
-- Use `@dataclass` for data containers
-- Use `Enum(str, Enum)` for string enums
-- Lazy imports in CLI functions
-- Rich console for CLI output
+- Type hints everywhere
+- `Path` over `str` for file paths
+- `@dataclass` for data containers with `to_dict()` / `from_dict()` methods
+- `Enum(str, Enum)` for JSON-serializable enums
+- Lazy imports in CLI functions (import at function level)
+- `console.print()` from Rich for CLI output
 - httpx for HTTP clients (not requests)
-
-## Dependencies
-
-Key dependencies from `pyproject.toml`:
-- `typer` - CLI framework
-- `rich` - Console formatting
-- `textual` - TUI framework
-- `faster-whisper` - Transcription
-- `httpx` - Ollama API client
-- `pdfplumber` - PDF parsing
-- `python-docx` - DOCX generation
-- `numpy` - Vector operations (workbench)
